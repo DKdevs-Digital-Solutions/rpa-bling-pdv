@@ -2,8 +2,6 @@ services:
   bling-mvp:
     build: .
     container_name: bling-mvp
-    env_file:
-      - .env
     ports:
       - "3000:3000"
     volumes:
