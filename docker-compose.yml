@@ -3,7 +3,7 @@ services:
     build: .
     container_name: bling-mvp
     ports:
-      - "3000:3000"
+      - "3004:3004"
     volumes:
       - ./data:/data
     restart: unless-stopped
