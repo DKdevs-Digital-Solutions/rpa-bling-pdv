@@ -7,3 +7,9 @@ services:
     volumes:
       - ./data:/data
     restart: unless-stopped
+    networks:
+      - proxy_public
+
+networks:
+  proxy_public:
+    external: true
