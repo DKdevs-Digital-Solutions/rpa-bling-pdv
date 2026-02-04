@@ -1,4 +1,6 @@
 const axios = require("axios");
+const { waitTurn } = require("../utils/blingLimiter");
+
 const {
   BLING_API_BASE,
   FORMA_PAGAMENTO_ID,
@@ -14,35 +16,89 @@ function isoDaysAgo(days) {
   return d.toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
-async function blingGet(path, params) {
-  const token = await getValidAccessToken();
-  try {
-    const resp = await axios.get(`${BLING_API_BASE}${path}`, {
-      params,
-      headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
-    });
-    return resp;
-  } catch (e) {
-    console.error(`[BLING][GET] ${path} falhou`, e?.response?.status, JSON.stringify(e?.response?.data || e.message, null, 2));
-    throw e;
+function isTooManyRequests(err) {
+  const status = err?.response?.status;
+  const type = err?.response?.data?.error?.type;
+  return status === 429 || type === "TOO_MANY_REQUESTS";
+}
+
+/**
+ * Wrapper central para garantir:
+ * - rate limit via waitTurn()
+ * - retry em 429/TOO_MANY_REQUESTS
+ */
+async function blingRequest(config, { maxRetries = 3 } = {}) {
+  let attempt = 0;
+
+  while (true) {
+    attempt += 1;
+
+    // garante espaçamento entre chamadas
+    await waitTurn();
+
+    try {
+      const token = await getValidAccessToken();
+      const resp = await axios({
+        baseURL: BLING_API_BASE,
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+          ...(config.method && config.method.toLowerCase() !== "get"
+            ? { "Content-Type": "application/json" }
+            : {}),
+          ...(config.headers || {}),
+        },
+        ...config,
+      });
+
+      return resp;
+    } catch (e) {
+      const status = e?.response?.status;
+      const data = e?.response?.data;
+
+      if (isTooManyRequests(e) && attempt < maxRetries) {
+        console.warn(
+          `[BLING][RATE LIMIT] ${config.method?.toUpperCase() || "GET"} ${
+            config.url
+          } -> 429/TOO_MANY_REQUESTS (tentativa ${attempt}/${maxRetries}). Vou aguardar e tentar de novo.`
+        );
+
+        // como você quer 5s entre etapas, reaproveitamos waitTurn() na próxima volta.
+        // mas pra garantir folga extra em 429, podemos esperar +5s aqui também:
+        await new Promise((r) => setTimeout(r, 5000));
+        continue;
+      }
+
+      console.error(
+        `[BLING][${config.method?.toUpperCase() || "GET"}] ${config.url} falhou`,
+        status,
+        JSON.stringify(data || e.message, null, 2)
+      );
+      throw e;
+    }
   }
 }
 
+async function blingGet(path, params) {
+  return blingRequest(
+    {
+      method: "get",
+      url: path,
+      params,
+    },
+    { maxRetries: 3 }
+  );
+}
+
 async function blingPatch(path, body) {
-  const token = await getValidAccessToken();
-  try {
-    const resp = await axios.patch(`${BLING_API_BASE}${path}`, body || {}, {
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-    });
-    return resp;
-  } catch (e) {
-    console.error(`[BLING][PATCH] ${path} falhou`, e?.response?.status, JSON.stringify(e?.response?.data || e.message, null, 2));
-    throw e;
-  }
+  return blingRequest(
+    {
+      method: "patch",
+      url: path,
+      data: body || {},
+    },
+    { maxRetries: 3 }
+  );
 }
 
 async function listContasReceberAbertasERecebidas() {
@@ -82,7 +138,8 @@ function extractSituacaoId(pedido) {
 
   // casos comuns
   if (typeof pedido?.situacao === "number") return pedido.situacao;
-  if (typeof pedido?.situacao === "string") return Number(pedido.situacao) || pedido.situacao;
+  if (typeof pedido?.situacao === "string")
+    return Number(pedido.situacao) || pedido.situacao;
 
   if (pedido?.situacao?.id) return pedido.situacao.id;
   if (pedido?.idSituacao) return pedido.idSituacao;
@@ -99,7 +156,10 @@ async function getPedidoSituacaoId(pedidoId) {
 
 async function setSituacaoPedido(pedidoId, situacaoId) {
   console.log(`[BLING] PATCH pedido=${pedidoId} -> situacao=${situacaoId}`);
-  await blingPatch(`/pedidos/vendas/${pedidoId}/situacoes/${situacaoId}?lancarContasFinanceiras=false`, {});
+  await blingPatch(
+    `/pedidos/vendas/${pedidoId}/situacoes/${situacaoId}?lancarContasFinanceiras=false`,
+    {}
+  );
 }
 
 async function marcarPedidoComoPago(pedidoId) {
