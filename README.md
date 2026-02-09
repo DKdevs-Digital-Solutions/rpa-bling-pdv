@@ -15,6 +15,15 @@ Se você já tem tokens, pode informar no `.env`:
 
 No boot, se **não existir** `tokens.json`, o serviço cria automaticamente.
 
+## Multi-contas (4+ contas)
+
+Se você precisa rodar em **múltiplas contas Bling**, configure `BLING_ACCOUNTS` no `.env` como um JSON
+com uma lista de contas, cada uma com seu `client_id`, `client_secret` e `redirect_uri`.
+
+- OAuth por conta: `GET /auth/start?account=loja1`
+- Sync em todas as contas: `POST /sync`
+- Sync em uma conta: `POST /sync` com `{ "accountId": "loja1" }`
+
 ## Como rodar
 
 ```bash

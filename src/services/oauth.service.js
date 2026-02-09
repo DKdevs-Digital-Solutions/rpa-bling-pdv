@@ -1,10 +1,8 @@
 const axios = require("axios");
 const {
-  BLING_CLIENT_ID,
-  BLING_CLIENT_SECRET,
-  BLING_REDIRECT_URI,
   BLING_AUTH_URL,
   BLING_TOKEN_URL,
+  getAccount,
 } = require("../config");
 const { getTokens, saveTokens } = require("./tokenStore");
 
@@ -14,24 +12,35 @@ function generateState() {
   return crypto.randomBytes(16).toString("hex");
 }
 
-function buildAuthUrl(state) {
+function buildAuthUrl(accountId, state) {
+  const acc = getAccount(accountId);
+  if (!acc?.client_id) throw new Error(`Conta '${accountId}' sem client_id no BLING_ACCOUNTS`);
+  const redirect = acc.redirect_uri;
+  if (!redirect) throw new Error(`Conta '${accountId}' sem redirect_uri no BLING_ACCOUNTS`);
   const params = new URLSearchParams({
     response_type: "code",
-    client_id: BLING_CLIENT_ID,
-    redirect_uri: BLING_REDIRECT_URI,
+    client_id: acc.client_id,
+    redirect_uri: redirect,
     state,
   });
   return `${BLING_AUTH_URL}?${params.toString()}`;
 }
 
-async function exchangeCodeForToken(code) {
+async function exchangeCodeForToken(accountId, code) {
+  const acc = getAccount(accountId);
+  if (!acc?.client_id || !acc?.client_secret) {
+    throw new Error(`Conta '${accountId}' sem client_id/client_secret no BLING_ACCOUNTS`);
+  }
+  const redirect = acc.redirect_uri;
+  if (!redirect) throw new Error(`Conta '${accountId}' sem redirect_uri no BLING_ACCOUNTS`);
+
   const data = new URLSearchParams({
     grant_type: "authorization_code",
     code,
-    redirect_uri: BLING_REDIRECT_URI,
+    redirect_uri: redirect,
   });
 
-  const basic = Buffer.from(`${BLING_CLIENT_ID}:${BLING_CLIENT_SECRET}`).toString("base64");
+  const basic = Buffer.from(`${acc.client_id}:${acc.client_secret}`).toString("base64");
 
   const resp = await axios.post(BLING_TOKEN_URL, data.toString(), {
     headers: {
@@ -48,18 +57,22 @@ async function exchangeCodeForToken(code) {
     expires_at: now + expiresIn * 1000 - 30_000,
   };
 
-  saveTokens(tokens);
+  saveTokens(accountId, tokens);
   return tokens;
 }
 
 
-async function refreshAccessToken(refreshToken) {
+async function refreshAccessToken(accountId, refreshToken) {
+  const acc = getAccount(accountId);
+  if (!acc?.client_id || !acc?.client_secret) {
+    throw new Error(`Conta '${accountId}' sem client_id/client_secret no BLING_ACCOUNTS`);
+  }
   const data = new URLSearchParams({
     grant_type: "refresh_token",
     refresh_token: refreshToken,
   });
 
-  const basic = Buffer.from(`${BLING_CLIENT_ID}:${BLING_CLIENT_SECRET}`).toString("base64");
+  const basic = Buffer.from(`${acc.client_id}:${acc.client_secret}`).toString("base64");
 
   const resp = await axios.post(BLING_TOKEN_URL, data.toString(), {
     headers: {
@@ -78,21 +91,25 @@ async function refreshAccessToken(refreshToken) {
     expires_at: now + expiresIn * 1000 - 30_000,
   };
 
-  saveTokens(tokens);
+  saveTokens(accountId, tokens);
   return tokens;
 }
 
 
-async function getValidAccessToken() {
-  const tokens = getTokens();
+async function getValidAccessToken(accountId = "default") {
+  const tokens = getTokens(accountId);
   if (!tokens?.access_token && !tokens?.refresh_token) {
-    throw new Error("Sem tokens: faça OAuth em /auth/start ou informe BLING_REFRESH_TOKEN no .env");
+    throw new Error(
+      `Sem tokens para '${accountId}': faça OAuth em /auth/start?account=${encodeURIComponent(
+        accountId
+      )} ou informe refresh_token no BLING_ACCOUNTS`
+    );
   }
 
   if (tokens.access_token && tokens.expires_at && Date.now() < tokens.expires_at) return tokens.access_token;
 
   if (tokens.refresh_token) {
-    const newTokens = await refreshAccessToken(tokens.refresh_token);
+    const newTokens = await refreshAccessToken(accountId, tokens.refresh_token);
     return newTokens.access_token;
   }
 

@@ -1,5 +1,5 @@
 const { getState, saveState } = require("./stateStore");
-const { STATE_TTL_HOURS, STATE_MAX_ITEMS } = require("../config");
+const { STATE_TTL_HOURS, STATE_MAX_ITEMS, getAccountConfig } = require("../config");
 const {
   listContasReceberAbertasERecebidas,
   findPedidoVendaIdByNumero,
@@ -8,7 +8,7 @@ const {
 } = require("./bling.service");
 
 // ====== LOCK (evita concorrência de sync) ======
-let isRunning = false;
+const isRunningByAccount = new Map();
 
 // ====== DELAY ENTRE REQUISIÇÕES ======
 function sleep(ms) {
@@ -16,9 +16,8 @@ function sleep(ms) {
 }
 const REQUEST_DELAY_MS = 5000; // 5 segundos
 
-// ====== FLOW: 6 -> 9 -> 15 -> 89414 -> 89199 ======
-const START_SITUACAO = 6;
-const FLOW = [723333, 89199];
+// ====== FLOW (por conta) ======
+// Configure por conta via BLING_ACCOUNTS[].config: { start_situacao, flow, final_situacao_id }
 
 // ====== LOGS COLORIDOS PARA MELHOR VISUALIZAÇÃO ======
 const LOG_COLORS = {
@@ -89,37 +88,46 @@ function pruneProcessed(processedContaIds) {
   return compact;
 }
 
-function flowIndexOf(situacao) {
-  return FLOW.indexOf(Number(situacao));
+function flowIndexOf(flow, situacao) {
+  return (flow || []).indexOf(Number(situacao));
 }
 
-function nextStepIndexFromSituacao(situacaoAtual) {
-  const idx = flowIndexOf(situacaoAtual);
+function nextStepIndexFromSituacao(flow, situacaoAtual) {
+  const idx = flowIndexOf(flow, situacaoAtual);
   if (idx >= 0) return idx + 1;
   return 0;
 }
 
-async function syncOnce() {
-  if (isRunning) {
-    logWarning("Já existe um sync em execução. Ignorando esta chamada.");
-    return { skipped: true, reason: "sync_already_running" };
+async function syncOnce(accountId = "default") {
+  const key = String(accountId);
+  if (isRunningByAccount.get(key)) {
+    logWarning(`Já existe um sync em execução para '${key}'. Ignorando esta chamada.`);
+    return { skipped: true, reason: "sync_already_running", accountId: key };
   }
 
-  isRunning = true;
+  isRunningByAccount.set(key, true);
 
   try {
     const startedAt = Date.now();
+    const cfg = getAccountConfig(key);
+    const START_SITUACAO = Number(cfg.start_situacao);
+    const FLOW = Array.isArray(cfg.flow) ? cfg.flow.map(Number) : [];
+    const FINAL_SITUACAO = Number(cfg.final_situacao_id ?? (FLOW.length ? FLOW[FLOW.length - 1] : NaN));
+    if (!Number.isFinite(START_SITUACAO) || !Array.isArray(FLOW) || FLOW.length === 0 || !Number.isFinite(FINAL_SITUACAO)) {
+      throw new Error(`Config de fluxo inválida para a conta ${key}. Verifique start_situacao, flow e final_situacao_id.`);
+    }
+
     logSeparator();
     logInfo(`🚀 INICIANDO SINCRONIZAÇÃO em ${new Date().toISOString()}`);
     logSeparator();
 
-    const state = getState();
+    const state = getState(key);
     state.processedContaIds = pruneProcessed(state.processedContaIds || {});
     state.pendingPedidos = pruneByTtl(state.pendingPedidos || {}, STATE_TTL_HOURS);
 
     // ====== BUSCAR CONTAS A RECEBER ======
     logProgress("Buscando contas a receber (situações 1 e 2)...");
-    const contas = await listContasReceberAbertasERecebidas();
+    const contas = await listContasReceberAbertasERecebidas(key);
     logInfo(`📋 Total de contas encontradas: ${contas.length}`);
 
     const recebidasCount = contas.filter(c => c.situacao === 2).length;
@@ -163,7 +171,7 @@ async function syncOnce() {
         skips.semOrigem++;
         state.processedContaIds[contaId] = Date.now();
         actions.push({ contaId, status: "skip", motivo: "Sem origem" });
-        saveState(state);
+        saveState(key, state);
         continue;
       }
 
@@ -172,7 +180,7 @@ async function syncOnce() {
         skips.origemNaoVenda++;
         state.processedContaIds[contaId] = Date.now();
         actions.push({ contaId, status: "skip", motivo: `origem.tipoOrigem=${origem.tipoOrigem}` });
-        saveState(state);
+        saveState(key, state);
         continue;
       }
 
@@ -181,14 +189,14 @@ async function syncOnce() {
         skips.semNumero++;
         state.processedContaIds[contaId] = Date.now();
         actions.push({ contaId, status: "skip", motivo: "Sem origem.numero" });
-        saveState(state);
+        saveState(key, state);
         continue;
       }
 
       const numeroPedido = String(origem.numero).trim();
       logInfo(`🔍 Conta ${contaId} → Buscando Pedido #${numeroPedido}`);
 
-      const pedidoId = await findPedidoVendaIdByNumero(numeroPedido);
+      const pedidoId = await findPedidoVendaIdByNumero(numeroPedido, key);
       if (!pedidoId) {
         logError(`Pedido #${numeroPedido} NÃO ENCONTRADO no Bling`);
         skips.pedidoNaoEncontrado++;
@@ -208,36 +216,36 @@ async function syncOnce() {
         logProgress(`🔄 Pedido ${pedidoId} JÁ ESTÁ em processamento - continuando fluxo...`);
 
         try {
-          const situacaoAtual = await getPedidoSituacaoId(pedidoId);
+          const situacaoAtual = await getPedidoSituacaoId(pedidoId, key);
           logInfo(`📊 Situação atual do pedido: ${situacaoAtual}`);
 
           // Se já chegou no final
-          if (Number(situacaoAtual) === 89199) {
-            logSuccess(`🎉 Pedido ${pedidoId} JÁ ESTÁ na situação final 89199!`);
+          if (Number(situacaoAtual) === FINAL_SITUACAO) {
+            logSuccess(`🎉 Pedido ${pedidoId} JÁ ESTÁ na situação final ${FINAL_SITUACAO}!`);
             delete state.pendingPedidos[pendKey];
             state.processedContaIds[contaId] = Date.now();
-            actions.push({ contaId, numeroPedido, pedidoId, status: "ok", via: "pendente->89199" });
-            saveState(state);
+            actions.push({ contaId, numeroPedido, pedidoId, status: "ok", via: "pendente->final" });
+            saveState(key, state);
             continue;
           }
 
-          const computedNext = nextStepIndexFromSituacao(situacaoAtual);
+          const computedNext = nextStepIndexFromSituacao(FLOW, situacaoAtual);
           const currentStep = state.pendingPedidos[pendKey].stepIndex ?? 0;
           const stepIndex = Math.max(currentStep, computedNext);
 
-          // Se já passou de todas as etapas, força 89199
+          // Se já passou de todas as etapas, força situação final
           if (stepIndex >= FLOW.length) {
-            logWarning(`⚡ Forçando situação final 89199 para pedido ${pedidoId}`);
+            logWarning(`⚡ Forçando situação final ${FINAL_SITUACAO} para pedido ${pedidoId}`);
             logProgress(`⏳ Aguardando ${REQUEST_DELAY_MS / 1000}s antes de aplicar...`);
             await sleep(REQUEST_DELAY_MS);
 
-            await setSituacaoPedido(pedidoId, 89199);
-            logSuccess(`✓ Pedido ${pedidoId} → situação 89199 aplicada!`);
+            await setSituacaoPedido(pedidoId, FINAL_SITUACAO, key);
+            logSuccess(`✓ Pedido ${pedidoId} → situação ${FINAL_SITUACAO} aplicada!`);
 
             delete state.pendingPedidos[pendKey];
             state.processedContaIds[contaId] = Date.now();
-            actions.push({ contaId, numeroPedido, pedidoId, status: "ok", via: "pendente->force89199" });
-            saveState(state);
+            actions.push({ contaId, numeroPedido, pedidoId, status: "ok", via: "pendente->forceFinal" });
+            saveState(key, state);
             continue;
           }
 
@@ -247,24 +255,24 @@ async function syncOnce() {
 
           state.pendingPedidos[pendKey].stepIndex = stepIndex;
           state.pendingPedidos[pendKey].ts = Date.now();
-          saveState(state);
+          saveState(key, state);
 
           logProgress(`⏳ Aguardando ${REQUEST_DELAY_MS / 1000}s antes de aplicar situação ${nextSituacao}...`);
           await sleep(REQUEST_DELAY_MS);
 
-          await setSituacaoPedido(pedidoId, nextSituacao);
+          await setSituacaoPedido(pedidoId, nextSituacao, key);
           logSuccess(`✓ Situação ${nextSituacao} aplicada ao pedido ${pedidoId}`);
 
           state.pendingPedidos[pendKey].stepIndex = stepIndex + 1;
           state.pendingPedidos[pendKey].ts = Date.now();
-          saveState(state);
+          saveState(key, state);
 
-          if (nextSituacao === 89199) {
-            logSuccess(`🎉 FLUXO COMPLETO! Pedido ${pedidoId} chegou à situação final 89199`);
+          if (nextSituacao === FINAL_SITUACAO) {
+            logSuccess(`🎉 FLUXO COMPLETO! Pedido ${pedidoId} chegou à situação final ${FINAL_SITUACAO}`);
             delete state.pendingPedidos[pendKey];
             state.processedContaIds[contaId] = Date.now();
-            actions.push({ contaId, numeroPedido, pedidoId, status: "ok", via: "pendente->89199" });
-            saveState(state);
+            actions.push({ contaId, numeroPedido, pedidoId, status: "ok", via: "pendente->final" });
+            saveState(key, state);
           } else {
             actions.push({ contaId, numeroPedido, pedidoId, status: "pendente", applied: nextSituacao });
           }
@@ -282,7 +290,7 @@ async function syncOnce() {
 
       // ===== CASO 2: NOVO PEDIDO - INICIAR FLUXO (SOMENTE SE SITUAÇÃO = 6) =====
       try {
-        const situacaoAtual = await getPedidoSituacaoId(pedidoId);
+        const situacaoAtual = await getPedidoSituacaoId(pedidoId, key);
         logInfo(`📊 Situação atual do pedido ${pedidoId}: ${situacaoAtual}`);
 
         if (Number(situacaoAtual) !== START_SITUACAO) {
@@ -296,7 +304,7 @@ async function syncOnce() {
             status: "skip",
             motivo: `Não inicia fluxo: situacaoAtual=${situacaoAtual} (precisa ser 6)`,
           });
-          saveState(state);
+          saveState(key, state);
           continue;
         }
 
@@ -309,18 +317,18 @@ async function syncOnce() {
           numeroPedido,
           stepIndex: 0,
         };
-        saveState(state);
+        saveState(key, state);
 
         const first = FLOW[0];
         logProgress(`⏳ Aguardando ${REQUEST_DELAY_MS / 1000}s antes de aplicar primeira situação (${first})...`);
         await sleep(REQUEST_DELAY_MS);
 
-        await setSituacaoPedido(pedidoId, first);
+        await setSituacaoPedido(pedidoId, first, key);
         logSuccess(`✓ Primeira situação ${first} aplicada ao pedido ${pedidoId} (passo 1/${FLOW.length})`);
 
         state.pendingPedidos[pendKey].stepIndex = 1;
         state.pendingPedidos[pendKey].ts = Date.now();
-        saveState(state);
+        saveState(key, state);
 
         actions.push({ contaId, numeroPedido, pedidoId, status: "pendente", applied: first });
       } catch (e) {
@@ -338,7 +346,7 @@ async function syncOnce() {
     state.lastSyncAt = new Date().toISOString();
     state.processedContaIds = pruneProcessed(state.processedContaIds);
     state.pendingPedidos = pruneByTtl(state.pendingPedidos, STATE_TTL_HOURS);
-    saveState(state);
+    saveState(key, state);
 
     const tookMs = Date.now() - startedAt;
     const tookSec = (tookMs / 1000).toFixed(2);
@@ -363,6 +371,7 @@ async function syncOnce() {
     logSeparator();
 
     return {
+      accountId: key,
       syncedAt: state.lastSyncAt,
       tookMs,
       totalContasLidas: contas.length,
@@ -375,7 +384,7 @@ async function syncOnce() {
       actions,
     };
   } finally {
-    isRunning = false;
+    isRunningByAccount.delete(key);
   }
 }
 

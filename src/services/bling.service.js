@@ -1,13 +1,7 @@
 const axios = require("axios");
 const { waitTurn } = require("../utils/blingLimiter");
 
-const {
-  BLING_API_BASE,
-  FORMA_PAGAMENTO_ID,
-  DATA_INICIAL,
-  SITUACAO_PEDIDO_PAGO_ID,
-  LOOKBACK_DAYS,
-} = require("../config");
+const { BLING_API_BASE, getAccountConfig } = require("../config");
 const { getValidAccessToken } = require("./oauth.service");
 
 function isoDaysAgo(days) {
@@ -27,7 +21,7 @@ function isTooManyRequests(err) {
  * - rate limit via waitTurn()
  * - retry em 429/TOO_MANY_REQUESTS
  */
-async function blingRequest(config, { maxRetries = 3 } = {}) {
+async function blingRequest(config, { maxRetries = 3, accountId = "default" } = {}) {
   let attempt = 0;
 
   while (true) {
@@ -37,7 +31,7 @@ async function blingRequest(config, { maxRetries = 3 } = {}) {
     await waitTurn();
 
     try {
-      const token = await getValidAccessToken();
+      const token = await getValidAccessToken(accountId);
       const resp = await axios({
         baseURL: BLING_API_BASE,
         headers: {
@@ -79,56 +73,60 @@ async function blingRequest(config, { maxRetries = 3 } = {}) {
   }
 }
 
-async function blingGet(path, params) {
+async function blingGet(path, params, accountId) {
   return blingRequest(
     {
       method: "get",
       url: path,
       params,
     },
-    { maxRetries: 3 }
+    { maxRetries: 3, accountId }
   );
 }
 
-async function blingPatch(path, body) {
+async function blingPatch(path, body, accountId) {
   return blingRequest(
     {
       method: "patch",
       url: path,
       data: body || {},
     },
-    { maxRetries: 3 }
+    { maxRetries: 3, accountId }
   );
 }
 
-async function listContasReceberAbertasERecebidas() {
+async function listContasReceberAbertasERecebidas(accountId = "default") {
+  const cfg = getAccountConfig(accountId);
+
   const dataInicial =
-    LOOKBACK_DAYS && LOOKBACK_DAYS > 0 ? isoDaysAgo(LOOKBACK_DAYS) : DATA_INICIAL;
+    cfg.lookback_days && cfg.lookback_days > 0
+      ? isoDaysAgo(cfg.lookback_days)
+      : cfg.data_inicial;
 
   const params = {
     "situacoes[]": [1, 2],
-    idFormaPagamento: FORMA_PAGAMENTO_ID,
+    idFormaPagamento: cfg.forma_pagamento_id,
     dataInicial,
   };
 
   console.log(
-    `[BLING] Buscando contas receber: forma=${FORMA_PAGAMENTO_ID} dataInicial=${dataInicial} situacoes=1,2`
+    `[BLING] Buscando contas receber: conta=${accountId} forma=${cfg.forma_pagamento_id} dataInicial=${dataInicial} situacoes=1,2`
   );
 
-  const resp = await blingGet("/contas/receber", params);
+  const resp = await blingGet("/contas/receber", params, accountId);
   return resp.data?.data || [];
 }
 
-async function findPedidoVendaIdByNumero(numero) {
+async function findPedidoVendaIdByNumero(numero, accountId = "default") {
   console.log(`[BLING] Buscando pedido por numero=${numero}`);
-  const resp = await blingGet("/pedidos/vendas", { numero });
+  const resp = await blingGet("/pedidos/vendas", { numero }, accountId);
   const id = resp.data?.data?.[0]?.id || null;
   console.log(`[BLING] Resultado pedido numero=${numero} -> id=${id}`);
   return id;
 }
 
-async function getPedidoVendaById(pedidoId) {
-  const resp = await blingGet(`/pedidos/vendas/${pedidoId}`, {});
+async function getPedidoVendaById(pedidoId, accountId = "default") {
+  const resp = await blingGet(`/pedidos/vendas/${pedidoId}`, {}, accountId);
   return resp.data?.data || null;
 }
 
@@ -147,24 +145,30 @@ function extractSituacaoId(pedido) {
   return null;
 }
 
-async function getPedidoSituacaoId(pedidoId) {
-  const pedido = await getPedidoVendaById(pedidoId);
+async function getPedidoSituacaoId(pedidoId, accountId = "default") {
+  const pedido = await getPedidoVendaById(pedidoId, accountId);
   const situacaoId = extractSituacaoId(pedido);
   console.log(`[BLING] Pedido ${pedidoId} situação atual=${situacaoId}`);
   return situacaoId;
 }
 
-async function setSituacaoPedido(pedidoId, situacaoId) {
+async function setSituacaoPedido(pedidoId, situacaoId, accountId = "default") {
   console.log(`[BLING] PATCH pedido=${pedidoId} -> situacao=${situacaoId}`);
   await blingPatch(
     `/pedidos/vendas/${pedidoId}/situacoes/${situacaoId}?lancarContasFinanceiras=false`,
-    {}
+    {},
+    accountId
   );
 }
 
-async function marcarPedidoComoPago(pedidoId) {
-  await setSituacaoPedido(pedidoId, SITUACAO_PEDIDO_PAGO_ID);
+async function marcarPedidoComoPago(pedidoId, accountId = "default") {
+    const cfg = getAccountConfig(accountId);
+  if (!cfg.situacao_pedido_pago_id) {
+    throw new Error(`SITUACAO_PEDIDO_PAGO_ID não configurado para a conta ${accountId}`);
+  }
+  await setSituacaoPedido(pedidoId, cfg.situacao_pedido_pago_id, accountId);
 }
+
 
 module.exports = {
   listContasReceberAbertasERecebidas,

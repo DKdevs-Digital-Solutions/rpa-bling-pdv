@@ -1,21 +1,31 @@
 const path = require("path");
 const { readJsonSafe, writeJsonSafe } = require("../utils/jsonStore");
+const { OAUTH_STATE_PATH } = require("../config");
 
-const FILE = path.join(process.cwd(), "oauth-state.json");
+const FILE = OAUTH_STATE_PATH
+  ? path.resolve(process.cwd(), OAUTH_STATE_PATH)
+  : path.join(process.cwd(), "oauth-state.json");
 
-function saveState(state) {
-  writeJsonSafe(FILE, {
-    state,
-    createdAt: Date.now()
-  });
+function getAll() {
+  return readJsonSafe(FILE, { map: {} });
 }
 
-function getState() {
-  return readJsonSafe(FILE, null);
+function saveState(state, accountId) {
+  const all = getAll();
+  all.map = all.map || {};
+  all.map[String(state)] = { accountId: String(accountId || "default"), createdAt: Date.now() };
+  writeJsonSafe(FILE, all);
 }
 
-function clearState() {
-  writeJsonSafe(FILE, {});
+function getState(state) {
+  const all = getAll();
+  return all?.map?.[String(state)] || null;
+}
+
+function clearState(state) {
+  const all = getAll();
+  if (all?.map && state) delete all.map[String(state)];
+  writeJsonSafe(FILE, all);
 }
 
 module.exports = { saveState, getState, clearState };
