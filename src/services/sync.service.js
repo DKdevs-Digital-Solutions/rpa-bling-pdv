@@ -294,7 +294,7 @@ async function syncOnce(accountId = "default") {
         logInfo(`📊 Situação atual do pedido ${pedidoId}: ${situacaoAtual}`);
 
         if (Number(situacaoAtual) !== START_SITUACAO) {
-          logWarning(`⚠️  Pedido ${pedidoId} não está na situação inicial ${START_SITUACAO} (atual: ${situacaoAtual}) - NÃO INICIARÁ fluxo`);
+          // logWarning(`⚠️  Pedido ${pedidoId} não está na situação inicial ${START_SITUACAO} (atual: ${situacaoAtual}) - NÃO INICIARÁ fluxo`);
           skips.naoIniciaNao6++;
           state.processedContaIds[contaId] = Date.now();
           actions.push({
