@@ -4,10 +4,24 @@ const { waitTurn } = require("../utils/blingLimiter");
 const { BLING_API_BASE, getAccountConfig } = require("../config");
 const { getValidAccessToken } = require("./oauth.service");
 
+// IMPORTANTE:
+// Usar data em fuso LOCAL (não UTC) para evitar "perder" itens na virada do dia
+// quando o servidor/contêiner está em UTC e o negócio opera em BRT.
+function localISODate(d = new Date()) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function isoDaysAgo(days) {
   const d = new Date();
   d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+  return localISODate(d);
+}
+
+function isoToday() {
+  return localISODate(new Date());
 }
 
 function isTooManyRequests(err) {
@@ -99,21 +113,29 @@ async function listContasReceberAbertasERecebidas(accountId = "default") {
   const cfg = getAccountConfig(accountId);
 
   // Para monitorar contas recentes (ex.: PIX) e evitar perder contas novas,
-  // sempre trabalhamos com uma janela móvel (lookback). Se o usuário não
-  // configurar, assumimos 30 dias.
-  const lookback = (cfg.lookback_days && cfg.lookback_days > 0) ? cfg.lookback_days : 30;
-  const dataInicial = cfg.data_inicial || isoDaysAgo(lookback);
-  const dataFinal = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  // trabalhamos com uma janela móvel por DATA (conforme filtro do Bling).
+  // Requisito do projeto: últimos 7 dias contando com hoje.
+  // Se o usuário configurar lookback_days, respeitamos.
+  const lookback = (cfg.lookback_days && cfg.lookback_days > 0) ? cfg.lookback_days : 7;
+
+  // "contando com hoje" => 7 dias = hoje + 6 dias anteriores
+  const daysAgo = Math.max(0, lookback - 1);
+  const dataInicial = cfg.data_inicial || isoDaysAgo(daysAgo);
+  // IMPORTANTE: não fixamos dataFinal por padrão.
+  // Motivo: o filtro do Bling pode ser por vencimento/competência; ao limitar
+  // em "hoje" a gente pode perder títulos recém-criados com vencimento futuro.
+  // Se quiser limitar, configure cfg.data_final no .env.
+  const dataFinal = cfg.data_final || null;
 
   const params = {
     "situacoes[]": [1, 2],
     idFormaPagamento: cfg.forma_pagamento_id,
     dataInicial,
-    dataFinal,
+    ...(dataFinal ? { dataFinal } : {}),
   };
 
   console.log(
-    `[BLING] Buscando contas receber: conta=${accountId} forma=${cfg.forma_pagamento_id} dataInicial=${dataInicial} dataFinal=${dataFinal} situacoes=1,2`
+    `[BLING] Buscando contas receber: conta=${accountId} forma=${cfg.forma_pagamento_id} dataInicial=${dataInicial}${dataFinal ? ` dataFinal=${dataFinal}` : ""} situacoes=1,2`
   );
 
   const resp = await blingGet("/contas/receber", params, accountId);
