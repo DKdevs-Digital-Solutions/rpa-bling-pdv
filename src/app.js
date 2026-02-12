@@ -2,6 +2,7 @@ const express = require("express");
 const authRoutes = require("./routes/auth.routes");
 const syncRoutes = require("./routes/sync.routes");
 const logsRoutes = require("./routes/logs.routes");
+const accountsRoutes = require("./routes/accounts.routes");
 const { requestLoggerMiddleware } = require("./utils/logger");
 const path = require("path");
 
@@ -21,6 +22,7 @@ app.get("/", (req, res) => res.send("Bling MVP API OK"));
 
 app.use("/auth", authRoutes);
 app.use("/sync", syncRoutes);
+app.use("/api/accounts", accountsRoutes);
 app.use("/", logsRoutes);
 
 module.exports = app;

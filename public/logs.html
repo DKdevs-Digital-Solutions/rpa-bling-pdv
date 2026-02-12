@@ -54,7 +54,7 @@
           <div class="sub">Mostra o que o robô executou, com tempos, erros e passos (atualização ao vivo).</div>
         </div>
         <div class="controls" style="grid-column: 2 / -1;">
-          <input id="accountId" placeholder="accountId (ex: default)" />
+          <select id="accountId"><option value="">todas as lojas</option></select>
           <input id="jobId" placeholder="jobId (opcional)" />
           <select id="level">
             <option value="">todos níveis</option>
@@ -227,6 +227,24 @@
         if (filtered.length) lastTs = filtered[filtered.length - 1].ts;
       }
 
+      async function loadAccounts() {
+        try {
+          const r = await fetch('/api/accounts');
+          const j = await r.json();
+          const list = (j && j.accounts) ? j.accounts : [];
+          // limpa e repõe opção padrão
+          accountIdEl.innerHTML = '<option value="">todas as lojas</option>';
+          list.forEach((acc) => {
+            const opt = document.createElement('option');
+            opt.value = String(acc.id ?? '');
+            opt.textContent = String(acc.id ?? '');
+            accountIdEl.appendChild(opt);
+          });
+        } catch (_) {
+          // se falhar, mantém como está
+        }
+      }
+
       async function loadOnce() {
         const params = new URLSearchParams();
         const accountId = accountIdEl.value.trim();
@@ -261,7 +279,7 @@
       jobIdEl.onchange = () => loadOnce();
       levelEl.onchange = () => render();
 
-      loadOnce();
+      loadAccounts().then(() => loadOnce());
       connectSse();
     </script>
   </body>
