@@ -78,6 +78,32 @@
         <div class="card"><div class="metric" id="mErr">0</div><div class="label">erros</div></div>
       </div>
 
+
+      <div class="card" style="margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+          <div>
+            <div style="font-weight:650;">Auditoria (por conta)</div>
+            <div class="muted" style="font-size:12px;margin-top:4px;">Contas a receber encontradas e o status do pedido vinculado (processado/pendente/pulado/falha) com o motivo.</div>
+          </div>
+          <div class="muted" style="font-size:12px;">Dica: filtre por <span class="mono">accountId</span> e/ou <span class="mono">jobId</span>.</div>
+        </div>
+        <div style="height:10px;"></div>
+        <div style="overflow:auto;border:1px solid var(--border);border-radius:14px;">
+          <table class="table" id="tblAudit">
+            <thead>
+              <tr>
+                <th style="width:160px;">Conta (ID)</th>
+                <th style="width:160px;">Pedido (nº)</th>
+                <th style="width:140px;">Pedido (ID)</th>
+                <th style="width:120px;">Resultado</th>
+                <th>Motivo / Detalhe</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyAudit"></tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="card" style="padding:0;">
         <table class="table" id="tbl">
           <thead>
@@ -97,6 +123,7 @@
 
     <script>
       const tbody = document.getElementById('tbody');
+      const tbodyAudit = document.getElementById('tbodyAudit');
       const statusEl = document.getElementById('status');
       const accountIdEl = document.getElementById('accountId');
       const jobIdEl = document.getElementById('jobId');
@@ -164,6 +191,39 @@
         }).join('');
 
         tbody.innerHTML = rows;
+
+        // ---- Auditoria ----
+        const payableEvents = filtered.filter(e => e?.meta?.type === 'PAYABLE_RESULT');
+        // pega o último evento por contaId (o mais recente vence)
+        const byConta = new Map();
+        for (const e of payableEvents) {
+          const m = e.meta || {};
+          const k = String(m.contaId ?? '');
+          if (!k) continue;
+          byConta.set(k, { ...m, _ts: e.ts, _level: e.level });
+        }
+
+        // ordena por horário (mais recente primeiro)
+        const auditItems = Array.from(byConta.values()).sort((a,b) => String(b._ts).localeCompare(String(a._ts)));
+
+        const auditRows = auditItems.slice(0, 500).map(m => {
+          const result = m.result || '';
+          const reason = m.reason || (m.error ? 'erro' : '');
+          const detail = m.error ? JSON.stringify(m.error) : (m.applied ? `applied=${m.applied}` : '');
+          return `
+            <tr>
+              <td class="mono muted">${escapeHtml(String(m.contaId ?? ''))}</td>
+              <td class="mono muted">${escapeHtml(String(m.numeroPedido ?? ''))}</td>
+              <td class="mono muted">${escapeHtml(String(m.pedidoId ?? ''))}</td>
+              <td><span class="pill lvl-${escapeHtml(result === 'processed' ? 'success' : result === 'pending' ? 'progress' : result === 'fail' ? 'error' : result === 'skip' ? 'warn' : 'info')}">● ${escapeHtml(result)}</span></td>
+              <td>
+                <div>${escapeHtml(String(reason || ''))}</div>
+                ${detail ? `<div class="meta mono muted">${escapeHtml(detail)}</div>` : ''}
+              </td>
+            </tr>
+          `;
+        }).join('');
+        tbodyAudit.innerHTML = auditRows;
         if (filtered.length) lastTs = filtered[filtered.length - 1].ts;
       }
 

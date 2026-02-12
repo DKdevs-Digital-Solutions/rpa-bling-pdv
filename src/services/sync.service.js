@@ -73,6 +73,34 @@ function logSeparator() {
   console.log(`${LOG_COLORS.blue}${'='.repeat(80)}${LOG_COLORS.reset}`);
 }
 
+// ====== AUDIT EVENTS (para dashboard do cliente) ======
+// Eventos estruturados para auditoria por loja/conta.
+// Tudo vai em meta.type para o dashboard conseguir montar tabelas.
+function auditEvent(level, msg, meta = {}, step = "audit") {
+  const l = getLogger("default");
+  if (!l) return;
+  const safeMeta = meta && typeof meta === "object" ? meta : { value: meta };
+  l.event(level, msg, { step, meta: safeMeta });
+}
+
+function auditPayable(meta) {
+  const level = meta?.result === "processed" ? "success"
+    : meta?.result === "pending" ? "progress"
+    : meta?.result === "fail" ? "error"
+    : meta?.result === "skip" ? "warn"
+    : "info";
+  auditEvent(level, `Conta ${meta?.contaId} → ${meta?.result}`, { type: "PAYABLE_RESULT", ...meta });
+}
+
+function auditOrder(meta) {
+  const level = meta?.result === "processed" ? "success"
+    : meta?.result === "pending" ? "progress"
+    : meta?.result === "fail" ? "error"
+    : meta?.result === "skip" ? "warn"
+    : "info";
+  auditEvent(level, `Pedido ${meta?.pedidoId || meta?.numeroPedido || ""} → ${meta?.result}`, { type: "ORDER_RESULT", ...meta });
+}
+
 function pruneByTtl(mapObj, ttlHours) {
   const obj = mapObj || {};
   const now = Date.now();
@@ -144,6 +172,7 @@ async function syncOnce(accountId = "default") {
 
     logSeparator();
     logInfo(`🚀 INICIANDO SINCRONIZAÇÃO em ${new Date().toISOString()}`);
+    auditEvent('info', 'Sync iniciado', { type: 'TASK_START', accountId: key, jobId, cfg: { start_situacao: START_SITUACAO, flow: FLOW, final_situacao: FINAL_SITUACAO } }, 'task');
     logSeparator();
 
     const state = getState(key);
@@ -154,6 +183,7 @@ async function syncOnce(accountId = "default") {
     logProgress("Buscando contas a receber (situações 1 e 2)...");
     const contas = await listContasReceberAbertasERecebidas(key);
     logInfo(`📋 Total de contas encontradas: ${contas.length}`);
+    auditEvent('info', 'Contas a receber obtidas', { type: 'PAYABLES_FETCHED', total: contas.length }, 'fetch_payables');
 
     const recebidasCount = contas.filter(c => c.situacao === 2).length;
     logSuccess(`💰 Contas RECEBIDAS (situação=2): ${recebidasCount}`);
@@ -178,12 +208,14 @@ async function syncOnce(accountId = "default") {
       // ====== FILTRO 1: SOMENTE RECEBIDAS ======
       if (conta.situacao !== 2) {
         skips.naoRecebida++;
+        auditPayable({ accountId: key, contaId, result: 'skip', reason: 'naoRecebida', situacao: conta.situacao });
         continue;
       }
 
       // ====== FILTRO 2: NÃO PROCESSAR NOVAMENTE ======
       if (state.processedContaIds[contaId]) {
         skips.jaProcessada++;
+        auditPayable({ accountId: key, contaId, result: 'skip', reason: 'jaProcessada' });
         continue;
       }
 
@@ -194,6 +226,7 @@ async function syncOnce(accountId = "default") {
       if (!origem) {
         logWarning(`Conta ${contaId}: SEM ORIGEM - pulando`);
         skips.semOrigem++;
+        auditPayable({ accountId: key, contaId, result: 'skip', reason: 'semOrigem' });
         state.processedContaIds[contaId] = Date.now();
         actions.push({ contaId, status: "skip", motivo: "Sem origem" });
         saveState(key, state);
@@ -203,6 +236,7 @@ async function syncOnce(accountId = "default") {
       if (origem.tipoOrigem !== "venda") {
         logWarning(`Conta ${contaId}: Origem não é 'venda' (${origem.tipoOrigem}) - pulando`);
         skips.origemNaoVenda++;
+        auditPayable({ accountId: key, contaId, result: 'skip', reason: 'origemNaoVenda', origemTipo: origem.tipoOrigem });
         state.processedContaIds[contaId] = Date.now();
         actions.push({ contaId, status: "skip", motivo: `origem.tipoOrigem=${origem.tipoOrigem}` });
         saveState(key, state);
@@ -212,6 +246,7 @@ async function syncOnce(accountId = "default") {
       if (!origem.numero) {
         logWarning(`Conta ${contaId}: SEM número do pedido - pulando`);
         skips.semNumero++;
+        auditPayable({ accountId: key, contaId, result: 'skip', reason: 'semNumeroPedido' });
         state.processedContaIds[contaId] = Date.now();
         actions.push({ contaId, status: "skip", motivo: "Sem origem.numero" });
         saveState(key, state);
@@ -220,16 +255,20 @@ async function syncOnce(accountId = "default") {
 
       const numeroPedido = String(origem.numero).trim();
       logInfo(`🔍 Conta ${contaId} → Buscando Pedido #${numeroPedido}`);
+      auditEvent('info', 'Conta vinculada a numero de pedido', { type: 'PAYABLE_LINK', contaId, numeroPedido }, 'link');
 
       const pedidoId = await findPedidoVendaIdByNumero(numeroPedido, key);
       if (!pedidoId) {
         logError(`Pedido #${numeroPedido} NÃO ENCONTRADO no Bling`);
         skips.pedidoNaoEncontrado++;
+        auditPayable({ accountId: key, contaId, numeroPedido, result: 'fail', reason: 'pedidoNaoEncontrado' });
         actions.push({ contaId, numeroPedido, status: "falha", motivo: "Pedido não encontrado pelo numero" });
+        auditPayable({ accountId: key, contaId, numeroPedido, result: "fail", reason: "pedidoNaoEncontrado" });
         continue;
       }
 
       logSuccess(`✓ Pedido encontrado: ID ${pedidoId}`);
+      auditEvent('success', 'Pedido encontrado para conta', { type: 'ORDER_FOUND', contaId, numeroPedido, pedidoId }, 'fetch_order');
 
       const pendKey = String(pedidoId);
 
@@ -250,6 +289,8 @@ async function syncOnce(accountId = "default") {
             delete state.pendingPedidos[pendKey];
             state.processedContaIds[contaId] = Date.now();
             actions.push({ contaId, numeroPedido, pedidoId, status: "ok", via: "pendente->final" });
+            auditPayable({ accountId: key, contaId, numeroPedido, pedidoId, result: "processed", reason: "pendente->final" });
+            auditOrder({ accountId: key, contaId, numeroPedido, pedidoId, result: "processed", reason: "pendente->final" });
             saveState(key, state);
             continue;
           }
@@ -266,10 +307,13 @@ async function syncOnce(accountId = "default") {
 
             await setSituacaoPedido(pedidoId, FINAL_SITUACAO, key);
             logSuccess(`✓ Pedido ${pedidoId} → situação ${FINAL_SITUACAO} aplicada!`);
+            auditEvent('success', 'Situação final aplicada (forçado)', { type: 'ORDER_STATUS_APPLIED', pedidoId, to: FINAL_SITUACAO, forced: true, contaId, numeroPedido }, 'apply_status');
 
             delete state.pendingPedidos[pendKey];
             state.processedContaIds[contaId] = Date.now();
             actions.push({ contaId, numeroPedido, pedidoId, status: "ok", via: "pendente->forceFinal" });
+            auditPayable({ accountId: key, contaId, numeroPedido, pedidoId, result: "processed", reason: "pendente->forceFinal" });
+            auditOrder({ accountId: key, contaId, numeroPedido, pedidoId, result: "processed", reason: "pendente->forceFinal" });
             saveState(key, state);
             continue;
           }
@@ -287,6 +331,7 @@ async function syncOnce(accountId = "default") {
 
           await setSituacaoPedido(pedidoId, nextSituacao, key);
           logSuccess(`✓ Situação ${nextSituacao} aplicada ao pedido ${pedidoId}`);
+          auditEvent('success', 'Situação aplicada', { type: 'ORDER_STATUS_APPLIED', pedidoId, from: situacaoAtual, to: nextSituacao, contaId, numeroPedido }, 'apply_status');
 
           state.pendingPedidos[pendKey].stepIndex = stepIndex + 1;
           state.pendingPedidos[pendKey].ts = Date.now();
@@ -297,9 +342,13 @@ async function syncOnce(accountId = "default") {
             delete state.pendingPedidos[pendKey];
             state.processedContaIds[contaId] = Date.now();
             actions.push({ contaId, numeroPedido, pedidoId, status: "ok", via: "pendente->final" });
+            auditPayable({ accountId: key, contaId, numeroPedido, pedidoId, result: "processed", reason: "pendente->final" });
+            auditOrder({ accountId: key, contaId, numeroPedido, pedidoId, result: "processed", reason: "pendente->final" });
             saveState(key, state);
           } else {
             actions.push({ contaId, numeroPedido, pedidoId, status: "pendente", applied: nextSituacao });
+            auditPayable({ accountId: key, contaId, numeroPedido, pedidoId, result: "pending", reason: "em_fluxo", applied: nextSituacao });
+            auditOrder({ accountId: key, contaId, numeroPedido, pedidoId, result: "pending", reason: "em_fluxo", applied: nextSituacao });
           }
 
           continue;
@@ -309,6 +358,8 @@ async function syncOnce(accountId = "default") {
           logError(`FALHA ao processar pedido pendente ${pedidoId} (HTTP ${status})`);
           console.error(JSON.stringify(body, null, 2));
           actions.push({ contaId, numeroPedido, pedidoId, status: "falha", motivo: body });
+          auditPayable({ accountId: key, contaId, numeroPedido, pedidoId, result: "fail", reason: "erro_http", error: body });
+          auditOrder({ accountId: key, contaId, numeroPedido, pedidoId, result: "fail", reason: "erro_http", error: body });
           continue;
         }
       }
@@ -329,6 +380,8 @@ async function syncOnce(accountId = "default") {
             status: "skip",
             motivo: `Não inicia fluxo: situacaoAtual=${situacaoAtual} (precisa ser 6)`,
           });
+          auditPayable({ accountId: key, contaId, numeroPedido, pedidoId, result: 'skip', reason: 'naoIniciaFluxo', situacaoAtual });
+          auditOrder({ accountId: key, contaId, numeroPedido, pedidoId, result: 'skip', reason: 'naoIniciaFluxo', situacaoAtual });
           saveState(key, state);
           continue;
         }
@@ -350,18 +403,23 @@ async function syncOnce(accountId = "default") {
 
         await setSituacaoPedido(pedidoId, first, key);
         logSuccess(`✓ Primeira situação ${first} aplicada ao pedido ${pedidoId} (passo 1/${FLOW.length})`);
+        auditEvent('success', 'Primeira situação aplicada', { type: 'ORDER_STATUS_APPLIED', pedidoId, from: START_SITUACAO, to: first, contaId, numeroPedido }, 'apply_status');
 
         state.pendingPedidos[pendKey].stepIndex = 1;
         state.pendingPedidos[pendKey].ts = Date.now();
         saveState(key, state);
 
         actions.push({ contaId, numeroPedido, pedidoId, status: "pendente", applied: first });
+        auditPayable({ accountId: key, contaId, numeroPedido, pedidoId, result: "pending", reason: "inicio_fluxo", applied: first });
+        auditOrder({ accountId: key, contaId, numeroPedido, pedidoId, result: "pending", reason: "inicio_fluxo", applied: first });
       } catch (e) {
         const status = e?.response?.status;
         const body = e?.response?.data || { message: e.message };
         logError(`FALHA ao iniciar fluxo para pedido ${pedidoId} (HTTP ${status})`);
         console.error(JSON.stringify(body, null, 2));
         actions.push({ contaId, numeroPedido, pedidoId, status: "falha", motivo: body });
+          auditPayable({ accountId: key, contaId, numeroPedido, pedidoId, result: "fail", reason: "erro_http", error: body });
+          auditOrder({ accountId: key, contaId, numeroPedido, pedidoId, result: "fail", reason: "erro_http", error: body });
       }
 
       logProgress(`⏳ Aguardando ${REQUEST_DELAY_MS / 1000}s antes de processar próxima conta...`);
@@ -394,6 +452,23 @@ async function syncOnce(accountId = "default") {
       }
     });
     logSeparator();
+
+    auditEvent('success', 'Sync finalizado', { 
+      type: 'TASK_END',
+      accountId: key,
+      jobId,
+      syncedAt: state.lastSyncAt,
+      tookMs,
+      counts: {
+        totalContasLidas: contas.length,
+        totalRecebidas: recebidasCount,
+        pedidosProcessados: processedInThisRun,
+        totalAcoes: actions.length,
+        processedSize: Object.keys(state.processedContaIds).length,
+        pendingSize: Object.keys(state.pendingPedidos).length,
+        skips
+      }
+    }, 'task');
 
     return {
       accountId: key,
