@@ -136,32 +136,9 @@ function requestLoggerMiddleware() {
     const logger = createLogger({ reqId });
     req.logger = logger;
 
-    const started = Date.now();
-
-    // Não poluir o log do cliente com tráfego do próprio dashboard/stream
-    const url = req.originalUrl || "";
-    const IGNORE_PREFIXES = [
-      "/logs",
-      "/api/logs",
-      "/api/accounts",
-      "/favicon.ico",
-    ];
-    const ignore = IGNORE_PREFIXES.some(p => url === p || url.startsWith(p + "?") || url.startsWith(p + "/"));
-
-    if (!ignore) logger.info(`HTTP ${req.method} ${req.originalUrl}`, {
-      meta: {
-        ip: req.ip,
-        ua: req.headers["user-agent"],
-      },
-    });
-
-    res.on("finish", () => {
-      if (ignore) return;
-      logger.info(`HTTP ${req.method} ${req.originalUrl} -> ${res.statusCode}`, {
-        durationMs: Date.now() - started,
-        meta: { statusCode: res.statusCode },
-      });
-    });
+    // Importante: NÃO registramos logs técnicos de HTTP neste projeto.
+    // O dashboard é para auditoria de negócio (contas/pedidos), então request logs
+    // só geram ruído e confundem o cliente.
 
     res.setHeader("x-request-id", reqId);
     next();

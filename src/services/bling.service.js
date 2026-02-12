@@ -98,19 +98,22 @@ async function blingPatch(path, body, accountId) {
 async function listContasReceberAbertasERecebidas(accountId = "default") {
   const cfg = getAccountConfig(accountId);
 
-  const dataInicial =
-    cfg.lookback_days && cfg.lookback_days > 0
-      ? isoDaysAgo(cfg.lookback_days)
-      : cfg.data_inicial;
+  // Para monitorar contas recentes (ex.: PIX) e evitar perder contas novas,
+  // sempre trabalhamos com uma janela móvel (lookback). Se o usuário não
+  // configurar, assumimos 30 dias.
+  const lookback = (cfg.lookback_days && cfg.lookback_days > 0) ? cfg.lookback_days : 30;
+  const dataInicial = cfg.data_inicial || isoDaysAgo(lookback);
+  const dataFinal = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
   const params = {
     "situacoes[]": [1, 2],
     idFormaPagamento: cfg.forma_pagamento_id,
     dataInicial,
+    dataFinal,
   };
 
   console.log(
-    `[BLING] Buscando contas receber: conta=${accountId} forma=${cfg.forma_pagamento_id} dataInicial=${dataInicial} situacoes=1,2`
+    `[BLING] Buscando contas receber: conta=${accountId} forma=${cfg.forma_pagamento_id} dataInicial=${dataInicial} dataFinal=${dataFinal} situacoes=1,2`
   );
 
   const resp = await blingGet("/contas/receber", params, accountId);

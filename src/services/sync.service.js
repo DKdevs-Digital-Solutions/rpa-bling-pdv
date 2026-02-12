@@ -89,7 +89,18 @@ function auditPayable(meta) {
     : meta?.result === "fail" ? "error"
     : meta?.result === "skip" ? "warn"
     : "info";
-  auditEvent(level, `Conta ${meta?.contaId} → ${meta?.result}`, { type: "PAYABLE_RESULT", ...meta });
+  // Enriquecimento: garante que o dashboard sempre consiga exibir
+  // status da conta e status do pedido sem exigir que todos os call-sites passem tudo.
+  const enriched = { ...(meta || {}) };
+  if (enriched.contaSituacao == null && enriched.situacao != null) enriched.contaSituacao = enriched.situacao;
+  // Neste projeto, qualquer resultado != pending só acontece quando a conta já foi RECEBIDA (situação=2)
+  if (enriched.contaSituacao == null && enriched.result !== 'pending') enriched.contaSituacao = 2;
+
+  if (enriched.pedidoSituacaoAtual == null && enriched.situacaoAtual != null) enriched.pedidoSituacaoAtual = enriched.situacaoAtual;
+  if (enriched.pedidoSituacaoAtual == null && enriched.applied != null) enriched.pedidoSituacaoAtual = enriched.applied;
+  if (enriched.pedidoSituacaoAtual == null && enriched.to != null) enriched.pedidoSituacaoAtual = enriched.to;
+
+  auditEvent(level, `Conta ${enriched?.contaId} → ${enriched?.result}`, { type: "PAYABLE_RESULT", ...enriched });
 }
 
 function auditOrder(meta) {
@@ -205,10 +216,20 @@ async function syncOnce(accountId = "default") {
     for (const conta of contas) {
       const contaId = String(conta.id);
 
-      // ====== FILTRO 1: SOMENTE RECEBIDAS ======
+      // ====== REGRA: CONTAS EM ABERTO (situação=1) ======
+      // Queremos mostrar para o cliente que a conta existe e está sendo monitorada.
+      // Só iniciamos o tratamento do pedido quando a conta vira "Recebida" (situação=2).
       if (conta.situacao !== 2) {
         skips.naoRecebida++;
-        auditPayable({ accountId: key, contaId, result: 'skip', reason: 'naoRecebida', situacao: conta.situacao });
+        const numeroPedido = String(conta?.origem?.numero || '').trim();
+        auditPayable({
+          accountId: key,
+          contaId,
+          numeroPedido: numeroPedido || null,
+          result: 'pending',
+          reason: 'aguardando_pagamento',
+          situacao: conta.situacao,
+        });
         continue;
       }
 

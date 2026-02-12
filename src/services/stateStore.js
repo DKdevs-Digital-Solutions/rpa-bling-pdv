@@ -16,12 +16,26 @@ function stateFileFor(accountId = "default") {
 }
 
 function getState(accountId = "default") {
-  return readJsonSafe(stateFileFor(accountId), {
+  const state = readJsonSafe(stateFileFor(accountId), {
     // { [idConta]: timestampMs }
     processedContaIds: {},
     lastSyncAt: null,
     pendingPedidos: {},
+    // controle de rotação diária do cache
+    cacheDate: null,
   });
+
+  // Limpa o cache de contas já processadas todo dia à 00:00 (dia mudou).
+  // Objetivo: permitir reprocessamento diário e evitar crescimento indefinido.
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  if (state.cacheDate !== today) {
+    state.cacheDate = today;
+    state.processedContaIds = {};
+    // Mantemos pendingPedidos: se o fluxo estiver em andamento, não queremos perder.
+  }
+
+  return state;
 }
 
 function saveState(accountId, state) {

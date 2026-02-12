@@ -67,7 +67,6 @@
             <option value="progress">progress</option>
             <option value="success">success</option>
           </select>
-          <label class="chk"><input type="checkbox" id="showTech" /> mostrar logs técnicos</label>
           <button id="reload">Recarregar</button>
           <button id="clear">Limpar tela</button>
         </div>
@@ -97,8 +96,10 @@
             <thead>
               <tr>
                 <th style="width:160px;">Conta (ID)</th>
+                <th style="width:140px;">Status conta</th>
                 <th style="width:160px;">Pedido (nº)</th>
                 <th style="width:140px;">Pedido (ID)</th>
+                <th style="width:160px;">Status pedido</th>
                 <th style="width:120px;">Resultado</th>
                 <th>Motivo / Detalhe</th>
               </tr>
@@ -132,7 +133,7 @@
       const accountIdEl = document.getElementById('accountId');
       const jobIdEl = document.getElementById('jobId');
       const levelEl = document.getElementById('level');
-      const showTechEl = document.getElementById('showTech');
+      // Logs técnicos não são exibidos em hipótese nenhuma (painel é para cliente).
       const reloadBtn = document.getElementById('reload');
       const clearBtn = document.getElementById('clear');
 
@@ -163,13 +164,11 @@
         const accountId = accountIdEl.value.trim();
         const jobId = jobIdEl.value.trim();
         const level = levelEl.value;
-        const showTech = !!showTechEl?.checked;
-
-        // Esconde ruído técnico por padrão (dashboard chamando endpoints, SSE pings, etc.)
+        // Esconde ruído técnico (dashboard chamando endpoints, SSE pings, etc.)
         const msg = String(e.msg || '');
         const isHttpNoise = msg.startsWith('HTTP ');
         const isPing = e?.meta?.type === 'ping' || msg.toLowerCase().includes('ping');
-        if (!showTech && (isHttpNoise || isPing)) return false;
+        if (isHttpNoise || isPing) return false;
         if (accountId && String(e.accountId) !== accountId) return false;
         if (jobId && String(e.jobId) !== jobId) return false;
         if (level && String(e.level) !== level) return false;
@@ -206,6 +205,17 @@
 
         // ---- Auditoria ----
         const payableEvents = filtered.filter(e => e?.meta?.type === 'PAYABLE_RESULT');
+        // Última situação aplicada/observada de cada pedido (para preencher a coluna "Status pedido")
+        const orderAppliedEvents = filtered.filter(e => e?.meta?.type === 'ORDER_STATUS_APPLIED');
+        const lastOrderStatus = new Map();
+        for (const e of orderAppliedEvents) {
+          const m = e.meta || {};
+          const pid = String(m.pedidoId ?? '');
+          if (!pid) continue;
+          const to = (m.to != null ? m.to : (m.applied != null ? m.applied : null));
+          if (to == null) continue;
+          lastOrderStatus.set(pid, { to, ts: e.ts });
+        }
         // pega o último evento por contaId (o mais recente vence)
         const byConta = new Map();
         for (const e of payableEvents) {
@@ -218,15 +228,38 @@
         // ordena por horário (mais recente primeiro)
         const auditItems = Array.from(byConta.values()).sort((a,b) => String(b._ts).localeCompare(String(a._ts)));
 
+        function contaStatusLabel(v) {
+          const n = (v == null || v === '') ? null : Number(v);
+          if (n === 1) return 'Aberta (1)';
+          if (n === 2) return 'Recebida (2)';
+          if (Number.isFinite(n)) return `Situação ${n}`;
+          return '';
+        }
+
+        function pedidoStatusLabel(v) {
+          if (v == null || v === '') return '';
+          const n = Number(v);
+          return Number.isFinite(n) ? String(n) : String(v);
+        }
+
         const auditRows = auditItems.slice(0, 500).map(m => {
           const result = m.result || '';
           const reason = m.reason || (m.error ? 'erro' : '');
           const detail = m.error ? JSON.stringify(m.error) : (m.applied ? `applied=${m.applied}` : '');
+
+          const contaStatus = contaStatusLabel(m.contaSituacao ?? m.situacao);
+          let pedidoStatus = pedidoStatusLabel(m.pedidoSituacaoAtual ?? m.situacaoAtual ?? m.applied ?? m.to);
+          if (!pedidoStatus && m.pedidoId) {
+            const last = lastOrderStatus.get(String(m.pedidoId));
+            if (last?.to != null) pedidoStatus = pedidoStatusLabel(last.to);
+          }
           return `
             <tr>
               <td class="mono muted">${escapeHtml(String(m.contaId ?? ''))}</td>
+              <td class="mono muted">${escapeHtml(String(contaStatus || ''))}</td>
               <td class="mono muted">${escapeHtml(String(m.numeroPedido ?? ''))}</td>
               <td class="mono muted">${escapeHtml(String(m.pedidoId ?? ''))}</td>
+              <td class="mono muted">${escapeHtml(String(pedidoStatus || ''))}</td>
               <td><span class="pill lvl-${escapeHtml(result === 'processed' ? 'success' : result === 'pending' ? 'progress' : result === 'fail' ? 'error' : result === 'skip' ? 'warn' : 'info')}">● ${escapeHtml(result)}</span></td>
               <td>
                 <div>${escapeHtml(String(reason || ''))}</div>
