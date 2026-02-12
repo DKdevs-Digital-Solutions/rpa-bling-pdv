@@ -7,21 +7,34 @@ const { getValidAccessToken } = require("./oauth.service");
 // IMPORTANTE:
 // Usar data em fuso LOCAL (não UTC) para evitar "perder" itens na virada do dia
 // quando o servidor/contêiner está em UTC e o negócio opera em BRT.
-function localISODate(d = new Date()) {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
+// Datas no fuso de negócio (por padrão BRT = -180 minutos).
+// Isso evita "perder" itens na virada do dia quando o servidor/contêiner está em UTC.
+function businessISODate(d = new Date()) {
+  const offsetMin = Number(process.env.BUSINESS_TZ_OFFSET_MINUTES ?? -180); // BRT default
+  const shifted = new Date(d.getTime() + offsetMin * 60 * 1000);
+  // usamos getters UTC porque já fizemos o shift manual
+  const yyyy = shifted.getUTCFullYear();
+  const mm = String(shifted.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(shifted.getUTCDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 }
 
 function isoDaysAgo(days) {
   const d = new Date();
   d.setDate(d.getDate() - days);
-  return localISODate(d);
+  return businessISODate(d);
 }
 
 function isoToday() {
-  return localISODate(new Date());
+  return businessISODate(new Date());
+}
+
+function isoStartOfDay(dateStr) {
+  return `${dateStr} 00:00:00`;
+}
+
+function isoEndOfDay(dateStr) {
+  return `${dateStr} 23:59:59`;
 }
 
 function isTooManyRequests(err) {
@@ -112,30 +125,41 @@ async function blingPatch(path, body, accountId) {
 async function listContasReceberAbertasERecebidas(accountId = "default") {
   const cfg = getAccountConfig(accountId);
 
-  // Para monitorar contas recentes (ex.: PIX) e evitar perder contas novas,
-  // trabalhamos com uma janela móvel por DATA (conforme filtro do Bling).
-  // Requisito do projeto: últimos 7 dias contando com hoje.
-  // Se o usuário configurar lookback_days, respeitamos.
+  // Requisito do projeto: últimos 7 dias contando com hoje (janela móvel).
   const lookback = (cfg.lookback_days && cfg.lookback_days > 0) ? cfg.lookback_days : 7;
-
-  // "contando com hoje" => 7 dias = hoje + 6 dias anteriores
   const daysAgo = Math.max(0, lookback - 1);
-  const dataInicial = cfg.data_inicial || isoDaysAgo(daysAgo);
-  // IMPORTANTE: não fixamos dataFinal por padrão.
-  // Motivo: o filtro do Bling pode ser por vencimento/competência; ao limitar
-  // em "hoje" a gente pode perder títulos recém-criados com vencimento futuro.
-  // Se quiser limitar, configure cfg.data_final no .env.
-  const dataFinal = cfg.data_final || null;
+
+  // Importante:
+  // - O Bling possui diferentes filtros por período. Na prática, para "data de emissão",
+  //   os filtros geralmente seguem o padrão *Inicial/*Final.
+  // - Para não perder títulos emitidos HOJE, usamos janela fechada (início e fim do dia).
+  const baseInicial = cfg.data_inicial || isoDaysAgo(daysAgo);
+  const baseFinal = cfg.data_final || isoToday();
+
+  const filterField = (cfg.date_filter_field || "emissao").toLowerCase(); // emissao | vencimento | alteracao
 
   const params = {
-    "situacoes[]": [1, 2],
-    idFormaPagamento: cfg.forma_pagamento_id,
-    dataInicial,
-    ...(dataFinal ? { dataFinal } : {}),
+    "situacoes[]": [1, 2],               // 1 = em aberto, 2 = recebida (paga)
+    idFormaPagamento: cfg.forma_pagamento_id, // PIX
   };
 
+  if (filterField === "vencimento") {
+    // Alguns ambientes usam dataInicial/dataFinal como vencimento.
+    params.dataInicial = baseInicial;
+    params.dataFinal = baseFinal;
+  } else if (filterField === "alteracao") {
+    // Para casos onde o período deve considerar alterações
+    params.dataAlteracaoInicial = isoStartOfDay(baseInicial);
+    params.dataAlteracaoFinal = isoEndOfDay(baseFinal);
+  } else {
+    // Padrão do projeto: filtrar por EMISSÃO (para pegar o que foi gerado hoje).
+    params.dataEmissaoInicial = isoStartOfDay(baseInicial);
+    params.dataEmissaoFinal = isoEndOfDay(baseFinal);
+  }
+
   console.log(
-    `[BLING] Buscando contas receber: conta=${accountId} forma=${cfg.forma_pagamento_id} dataInicial=${dataInicial}${dataFinal ? ` dataFinal=${dataFinal}` : ""} situacoes=1,2`
+    `[BLING] Buscando contas receber: conta=${accountId} forma=${cfg.forma_pagamento_id} ` +
+    `periodo=${baseInicial}..${baseFinal} campo=${filterField} situacoes=1,2`
   );
 
   const resp = await blingGet("/contas/receber", params, accountId);
