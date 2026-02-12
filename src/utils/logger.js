@@ -137,7 +137,18 @@ function requestLoggerMiddleware() {
     req.logger = logger;
 
     const started = Date.now();
-    logger.info(`HTTP ${req.method} ${req.originalUrl}`, {
+
+    // Não poluir o log do cliente com tráfego do próprio dashboard/stream
+    const url = req.originalUrl || "";
+    const IGNORE_PREFIXES = [
+      "/logs",
+      "/api/logs",
+      "/api/accounts",
+      "/favicon.ico",
+    ];
+    const ignore = IGNORE_PREFIXES.some(p => url === p || url.startsWith(p + "?") || url.startsWith(p + "/"));
+
+    if (!ignore) logger.info(`HTTP ${req.method} ${req.originalUrl}`, {
       meta: {
         ip: req.ip,
         ua: req.headers["user-agent"],
@@ -145,6 +156,7 @@ function requestLoggerMiddleware() {
     });
 
     res.on("finish", () => {
+      if (ignore) return;
       logger.info(`HTTP ${req.method} ${req.originalUrl} -> ${res.statusCode}`, {
         durationMs: Date.now() - started,
         meta: { statusCode: res.statusCode },

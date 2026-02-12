@@ -26,6 +26,9 @@
       input, select, button { background: var(--card); border:1px solid var(--border); color: var(--text); border-radius:10px; padding:10px 12px; font-size:13px; outline:none; }
       button { cursor:pointer; }
       button:hover { border-color: rgba(255,255,255,0.18); }
+      .chk { display:flex; align-items:center; gap:8px; font-size:12px; color: var(--muted); padding: 8px 10px; border:1px solid var(--border); border-radius:10px; background: rgba(18,27,42,0.45);} 
+      .chk input { width:16px; height:16px; }
+
       main { padding:18px 20px; max-width:1100px; margin:0 auto; }
       .grid { display:grid; grid-template-columns: repeat(4,1fr); gap:12px; margin-bottom:12px; }
       .card { background: rgba(18,27,42,0.75); border:1px solid var(--border); border-radius:14px; padding:12px; }
@@ -64,6 +67,7 @@
             <option value="progress">progress</option>
             <option value="success">success</option>
           </select>
+          <label class="chk"><input type="checkbox" id="showTech" /> mostrar logs técnicos</label>
           <button id="reload">Recarregar</button>
           <button id="clear">Limpar tela</button>
         </div>
@@ -128,6 +132,7 @@
       const accountIdEl = document.getElementById('accountId');
       const jobIdEl = document.getElementById('jobId');
       const levelEl = document.getElementById('level');
+      const showTechEl = document.getElementById('showTech');
       const reloadBtn = document.getElementById('reload');
       const clearBtn = document.getElementById('clear');
 
@@ -158,6 +163,13 @@
         const accountId = accountIdEl.value.trim();
         const jobId = jobIdEl.value.trim();
         const level = levelEl.value;
+        const showTech = !!showTechEl?.checked;
+
+        // Esconde ruído técnico por padrão (dashboard chamando endpoints, SSE pings, etc.)
+        const msg = String(e.msg || '');
+        const isHttpNoise = msg.startsWith('HTTP ');
+        const isPing = e?.meta?.type === 'ping' || msg.toLowerCase().includes('ping');
+        if (!showTech && (isHttpNoise || isPing)) return false;
         if (accountId && String(e.accountId) !== accountId) return false;
         if (jobId && String(e.jobId) !== jobId) return false;
         if (level && String(e.level) !== level) return false;
