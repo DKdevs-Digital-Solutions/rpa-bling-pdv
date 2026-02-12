@@ -109,6 +109,12 @@
         border: none;
         padding: 12px 24px;
         color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        position: relative;
+        overflow: hidden;
       }
       
       button:hover { 
@@ -118,6 +124,32 @@
       
       button:active {
         transform: translateY(0);
+      }
+      
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        transform: none;
+      }
+      
+      button:disabled:hover {
+        transform: none;
+        box-shadow: none;
+      }
+      
+      .btn-icon {
+        width: 18px;
+        height: 18px;
+        transition: transform 0.3s;
+      }
+      
+      button.loading .btn-icon {
+        animation: spin 1s linear infinite;
+      }
+      
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
       }
 
       /* Cards de Métricas */
@@ -240,6 +272,15 @@
         top: 0;
         z-index: 10;
       }
+      
+      /* Alinhamento específico das colunas */
+      th:nth-child(1), td:nth-child(1) { text-align: left; }    /* Conta ID */
+      th:nth-child(2), td:nth-child(2) { text-align: center; }  /* Status Conta */
+      th:nth-child(3), td:nth-child(3) { text-align: left; }    /* Pedido Nº */
+      th:nth-child(4), td:nth-child(4) { text-align: center; }  /* Pedido ID */
+      th:nth-child(5), td:nth-child(5) { text-align: center; }  /* Status Pedido */
+      th:nth-child(6), td:nth-child(6) { text-align: center; }  /* Resultado */
+      th:nth-child(7), td:nth-child(7) { text-align: left; }    /* Detalhes */
       
       tbody tr {
         transition: background 0.2s;
@@ -431,14 +472,14 @@
             </select>
           </div>
           
-          <div class="filter-group">
-            <label class="filter-label">Job ID</label>
-            <input id="jobId" placeholder="Filtrar por Job ID..." />
-          </div>
-          
           <div class="filter-group" style="flex: 0; min-width: auto;">
             <label class="filter-label" style="opacity: 0;">Ação</label>
-            <button id="reload">🔄 Atualizar</button>
+            <button id="reload">
+              <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+              </svg>
+              <span>Atualizar</span>
+            </button>
           </div>
         </div>
       </header>
@@ -517,7 +558,6 @@
     <script>
       const tbody = document.getElementById('tbody');
       const accountIdEl = document.getElementById('accountId');
-      const jobIdEl = document.getElementById('jobId');
       const reloadBtn = document.getElementById('reload');
 
       const mTotal = document.getElementById('mTotal');
@@ -531,6 +571,7 @@
       const lastUpdate = document.getElementById('lastUpdate');
 
       let auditData = [];
+      let isLoading = false;
       
       function updateLastUpdate() {
         const now = new Date();
@@ -553,6 +594,17 @@
           statusIndicator.classList.remove('online');
           statusIndicator.classList.add('offline');
           statusText.textContent = 'Offline';
+        }
+      }
+      
+      function setLoadingState(loading) {
+        isLoading = loading;
+        if (loading) {
+          reloadBtn.classList.add('loading');
+          reloadBtn.disabled = true;
+        } else {
+          reloadBtn.classList.remove('loading');
+          reloadBtn.disabled = false;
         }
       }
 
@@ -586,14 +638,10 @@
 
       function render() {
         const accountId = accountIdEl.value.trim();
-        const jobId = jobIdEl.value.trim();
         
         let filtered = auditData;
         if (accountId) {
-          filtered = filtered.filter(item => String(item.contaId) === accountId);
-        }
-        if (jobId) {
-          filtered = filtered.filter(item => String(item.jobId) === jobId);
+          filtered = filtered.filter(item => String(item.accountId) === accountId);
         }
 
         // Atualizar métricas
@@ -683,7 +731,10 @@
       }
 
       async function loadData() {
+        if (isLoading) return;
+        
         try {
+          setLoadingState(true);
           setOnlineStatus(true);
           const params = new URLSearchParams();
           params.set('limit', '1000');
@@ -756,12 +807,13 @@
               </td>
             </tr>
           `;
+        } finally {
+          setLoadingState(false);
         }
       }
 
       reloadBtn.onclick = () => loadData();
       accountIdEl.onchange = () => render();
-      jobIdEl.oninput = () => render();
 
       // Carregar dados iniciais
       loadAccounts().then(() => loadData());
