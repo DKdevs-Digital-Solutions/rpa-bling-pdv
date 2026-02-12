@@ -3,6 +3,7 @@ const authRoutes = require("./routes/auth.routes");
 const syncRoutes = require("./routes/sync.routes");
 const logsRoutes = require("./routes/logs.routes");
 const { requestLoggerMiddleware } = require("./utils/logger");
+const path = require("path");
 
 const app = express();
 app.use(express.json());
@@ -11,7 +12,10 @@ app.use(express.json());
 app.use(requestLoggerMiddleware());
 
 // página estática do dashboard
-app.use(express.static("public"));
+// IMPORTANTE: em Docker o app roda com cwd = /data (pra persistir tokens/logs),
+// então não dá pra depender de caminhos relativos ao process.cwd().
+// Usamos caminho absoluto baseado no diretório do código (ex.: /app/src).
+app.use(express.static(path.join(__dirname, "..", "public")));
 
 app.get("/", (req, res) => res.send("Bling MVP API OK"));
 

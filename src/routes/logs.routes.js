@@ -6,7 +6,9 @@ const router = express.Router();
 
 // Dashboard (HTML)
 router.get("/logs", (req, res) => {
-  res.sendFile(path.join(process.cwd(), "public", "logs.html"));
+  // não usa process.cwd() porque em Docker o cwd é /data
+  // e o HTML fica junto do código em /app/public
+  res.sendFile(path.join(__dirname, "..", "..", "public", "logs.html"));
 });
 
 // API: últimos eventos (para o dashboard)

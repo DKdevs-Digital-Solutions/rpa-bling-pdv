@@ -11,6 +11,7 @@ RUN npm install --omit=dev
 
 # Copia o código
 COPY src ./src
+COPY public ./public
 COPY README.md ./
 
 # Pasta de dados persistentes (tokens/state/etc)
