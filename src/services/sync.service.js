@@ -6,9 +6,17 @@ const {
   getPedidoSituacaoId,
   setSituacaoPedido,
 } = require("./bling.service");
+const { createLogger } = require("../utils/logger");
+const { randomUUID } = require("crypto");
 
 // ====== LOCK (evita concorrência de sync) ======
 const isRunningByAccount = new Map();
+
+// logger por conta (usado pelos helpers de log abaixo)
+const loggerByAccount = new Map();
+function getLogger(accountId) {
+  return loggerByAccount.get(String(accountId));
+}
 
 // ====== DELAY ENTRE REQUISIÇÕES ======
 function sleep(ms) {
@@ -33,22 +41,32 @@ const LOG_COLORS = {
 
 function logInfo(msg) {
   console.log(`${LOG_COLORS.cyan}[INFO]${LOG_COLORS.reset} ${msg}`);
+  const l = getLogger("default");
+  l?.info(msg);
 }
 
 function logSuccess(msg) {
   console.log(`${LOG_COLORS.green}[✓ SUCCESS]${LOG_COLORS.reset} ${msg}`);
+  const l = getLogger("default");
+  l?.success(msg);
 }
 
 function logWarning(msg) {
   console.log(`${LOG_COLORS.yellow}[⚠ WARNING]${LOG_COLORS.reset} ${msg}`);
+  const l = getLogger("default");
+  l?.warn(msg);
 }
 
 function logError(msg) {
   console.log(`${LOG_COLORS.red}[✗ ERROR]${LOG_COLORS.reset} ${msg}`);
+  const l = getLogger("default");
+  l?.error(msg);
 }
 
 function logProgress(msg) {
   console.log(`${LOG_COLORS.magenta}[→ PROGRESS]${LOG_COLORS.reset} ${msg}`);
+  const l = getLogger("default");
+  l?.progress(msg);
 }
 
 function logSeparator() {
@@ -106,6 +124,13 @@ async function syncOnce(accountId = "default") {
   }
 
   isRunningByAccount.set(key, true);
+
+  // contexto de logs (aparece no /logs)
+  const jobId = randomUUID();
+  const logger = createLogger({ accountId: key, jobId });
+  loggerByAccount.set(key, logger);
+  // compat: helpers de log deste arquivo usam "default"
+  loggerByAccount.set("default", logger);
 
   try {
     const startedAt = Date.now();
@@ -372,6 +397,7 @@ async function syncOnce(accountId = "default") {
 
     return {
       accountId: key,
+      jobId,
       syncedAt: state.lastSyncAt,
       tookMs,
       totalContasLidas: contas.length,
@@ -385,6 +411,10 @@ async function syncOnce(accountId = "default") {
     };
   } finally {
     isRunningByAccount.delete(key);
+    loggerByAccount.delete(key);
+    if (loggerByAccount.get("default") === logger) {
+      loggerByAccount.delete("default");
+    }
   }
 }
 

@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Logs do Processamento</title>
+    <style>
+      :root {
+        --bg: #0b0f17;
+        --card: #121b2a;
+        --muted: #8ea0b7;
+        --text: #e6eef9;
+        --ok: #2bd576;
+        --warn: #ffcc66;
+        --err: #ff5d5d;
+        --info: #6bb6ff;
+        --progress: #d67dff;
+        --border: rgba(255,255,255,0.08);
+      }
+      body { margin:0; font-family: ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial; background: linear-gradient(180deg,var(--bg),#070b10); color: var(--text);} 
+      header { padding:18px 20px; border-bottom:1px solid var(--border); position:sticky; top:0; backdrop-filter: blur(10px); background: rgba(11,15,23,0.75); z-index:10; }
+      .row { display:grid; grid-template-columns: 1.2fr 1fr 1fr 1fr; gap:10px; align-items:center; }
+      h1 { margin:0; font-size:16px; font-weight:650; }
+      .sub { margin-top:6px; color: var(--muted); font-size:12px; }
+      .controls { display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
+      input, select, button { background: var(--card); border:1px solid var(--border); color: var(--text); border-radius:10px; padding:10px 12px; font-size:13px; outline:none; }
+      button { cursor:pointer; }
+      button:hover { border-color: rgba(255,255,255,0.18); }
+      main { padding:18px 20px; max-width:1100px; margin:0 auto; }
+      .grid { display:grid; grid-template-columns: repeat(4,1fr); gap:12px; margin-bottom:12px; }
+      .card { background: rgba(18,27,42,0.75); border:1px solid var(--border); border-radius:14px; padding:12px; }
+      .metric { font-size:24px; font-weight:700; }
+      .label { font-size:12px; color: var(--muted); margin-top:4px; }
+      .table { width:100%; border-collapse: collapse; overflow:hidden; border-radius:14px; }
+      .table th, .table td { border-bottom:1px solid var(--border); padding:10px 12px; font-size:13px; vertical-align:top; }
+      .table th { text-align:left; color: var(--muted); font-weight:650; background: rgba(18,27,42,0.9); position: sticky; top: 74px; z-index:5; }
+      .pill { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; border:1px solid var(--border); font-size:12px; white-space:nowrap; }
+      .lvl-info { color: var(--info); }
+      .lvl-progress { color: var(--progress); }
+      .lvl-success { color: var(--ok); }
+      .lvl-warn { color: var(--warn); }
+      .lvl-error { color: var(--err); }
+      .muted { color: var(--muted); }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+      .meta { margin-top:6px; padding:8px 10px; border-radius:10px; background: rgba(0,0,0,0.25); border:1px solid var(--border); white-space: pre-wrap; }
+      .footer { margin-top:10px; color: var(--muted); font-size:12px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="row">
+        <div>
+          <h1>Dashboard de Logs</h1>
+          <div class="sub">Mostra o que o robô executou, com tempos, erros e passos (atualização ao vivo).</div>
+        </div>
+        <div class="controls" style="grid-column: 2 / -1;">
+          <input id="accountId" placeholder="accountId (ex: default)" />
+          <input id="jobId" placeholder="jobId (opcional)" />
+          <select id="level">
+            <option value="">todos níveis</option>
+            <option value="error">error</option>
+            <option value="warn">warn</option>
+            <option value="info">info</option>
+            <option value="progress">progress</option>
+            <option value="success">success</option>
+          </select>
+          <button id="reload">Recarregar</button>
+          <button id="clear">Limpar tela</button>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <div class="grid">
+        <div class="card"><div class="metric" id="mTotal">0</div><div class="label">eventos</div></div>
+        <div class="card"><div class="metric" id="mOk">0</div><div class="label">sucessos</div></div>
+        <div class="card"><div class="metric" id="mWarn">0</div><div class="label">avisos</div></div>
+        <div class="card"><div class="metric" id="mErr">0</div><div class="label">erros</div></div>
+      </div>
+
+      <div class="card" style="padding:0;">
+        <table class="table" id="tbl">
+          <thead>
+            <tr>
+              <th style="width: 165px;">Horário</th>
+              <th style="width: 110px;">Nível</th>
+              <th>Mensagem</th>
+              <th style="width: 140px;">Conta / Job</th>
+              <th style="width: 120px;">Duração</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+      <div class="footer" id="status">conectando…</div>
+    </main>
+
+    <script>
+      const tbody = document.getElementById('tbody');
+      const statusEl = document.getElementById('status');
+      const accountIdEl = document.getElementById('accountId');
+      const jobIdEl = document.getElementById('jobId');
+      const levelEl = document.getElementById('level');
+      const reloadBtn = document.getElementById('reload');
+      const clearBtn = document.getElementById('clear');
+
+      const mTotal = document.getElementById('mTotal');
+      const mOk = document.getElementById('mOk');
+      const mWarn = document.getElementById('mWarn');
+      const mErr = document.getElementById('mErr');
+
+      let events = [];
+      let lastTs = null;
+      let es = null;
+
+      function fmtTime(iso) {
+        try { return new Date(iso).toLocaleString(undefined, { hour12: false }); }
+        catch (_) { return iso; }
+      }
+
+      function escapeHtml(s) {
+        return String(s)
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#039;');
+      }
+
+      function passesFilters(e) {
+        const accountId = accountIdEl.value.trim();
+        const jobId = jobIdEl.value.trim();
+        const level = levelEl.value;
+        if (accountId && String(e.accountId) !== accountId) return false;
+        if (jobId && String(e.jobId) !== jobId) return false;
+        if (level && String(e.level) !== level) return false;
+        return true;
+      }
+
+      function render() {
+        const filtered = events.filter(passesFilters);
+        mTotal.textContent = filtered.length;
+        mOk.textContent = filtered.filter(e => e.level === 'success').length;
+        mWarn.textContent = filtered.filter(e => e.level === 'warn').length;
+        mErr.textContent = filtered.filter(e => e.level === 'error').length;
+
+        const rows = filtered.slice(-500).map(e => {
+          const meta = e.meta ? `<div class="meta mono muted">${escapeHtml(JSON.stringify(e.meta, null, 2))}</div>` : '';
+          const step = e.step ? `<div class="muted">step: <span class="mono">${escapeHtml(e.step)}</span></div>` : '';
+          const dur = Number.isFinite(e.durationMs) ? `${e.durationMs} ms` : '';
+          return `
+            <tr>
+              <td class="mono muted">${escapeHtml(fmtTime(e.ts))}</td>
+              <td><span class="pill lvl-${escapeHtml(e.level)}">● ${escapeHtml(e.level)}</span></td>
+              <td>
+                <div>${escapeHtml(e.msg)}</div>
+                ${step}
+                ${meta}
+              </td>
+              <td class="mono muted">${escapeHtml(String(e.accountId ?? ''))}${e.jobId ? `\n${escapeHtml(String(e.jobId))}` : ''}</td>
+              <td class="mono muted">${escapeHtml(dur)}</td>
+            </tr>
+          `;
+        }).join('');
+
+        tbody.innerHTML = rows;
+        if (filtered.length) lastTs = filtered[filtered.length - 1].ts;
+      }
+
+      async function loadOnce() {
+        const params = new URLSearchParams();
+        const accountId = accountIdEl.value.trim();
+        const jobId = jobIdEl.value.trim();
+        if (accountId) params.set('accountId', accountId);
+        if (jobId) params.set('jobId', jobId);
+        params.set('limit', '600');
+        const r = await fetch(`/api/logs?${params.toString()}`);
+        const j = await r.json();
+        events = (j.events || []);
+        render();
+      }
+
+      function connectSse() {
+        if (es) { try { es.close(); } catch(_){} }
+        es = new EventSource('/api/logs/stream');
+        es.onopen = () => { statusEl.textContent = 'ao vivo: conectado'; };
+        es.onerror = () => { statusEl.textContent = 'ao vivo: tentando reconectar…'; };
+        es.onmessage = (ev) => {
+          try {
+            const e = JSON.parse(ev.data);
+            events.push(e);
+            if (events.length > 3000) events.splice(0, events.length - 3000);
+            render();
+          } catch (_) {}
+        };
+      }
+
+      reloadBtn.onclick = () => loadOnce();
+      clearBtn.onclick = () => { events = []; tbody.innerHTML = ''; render(); };
+      accountIdEl.onchange = () => loadOnce();
+      jobIdEl.onchange = () => loadOnce();
+      levelEl.onchange = () => render();
+
+      loadOnce();
+      connectSse();
+    </script>
+  </body>
+</html>
