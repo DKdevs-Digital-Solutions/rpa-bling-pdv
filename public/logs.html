@@ -276,11 +276,10 @@
       /* Alinhamento específico das colunas */
       th:nth-child(1), td:nth-child(1) { text-align: left; }    /* Conta ID */
       th:nth-child(2), td:nth-child(2) { text-align: center; }  /* Status Conta */
-      th:nth-child(3), td:nth-child(3) { text-align: left; }    /* Pedido Nº */
-      th:nth-child(4), td:nth-child(4) { text-align: center; }  /* Pedido ID */
+      th:nth-child(3), td:nth-child(3) { text-align: center; }    /* Pedido Nº */
       th:nth-child(5), td:nth-child(5) { text-align: center; }  /* Status Pedido */
       th:nth-child(6), td:nth-child(6) { text-align: center; }  /* Resultado */
-      th:nth-child(7), td:nth-child(7) { text-align: left; }    /* Detalhes */
+      th:nth-child(7), td:nth-child(7) { text-align: center; }    /* Detalhes */
       
       tbody tr {
         transition: background 0.2s;
@@ -543,7 +542,6 @@
                 <th>Conta ID</th>
                 <th>Status Conta</th>
                 <th>Pedido Nº</th>
-                <th>Pedido ID</th>
                 <th>Status Pedido</th>
                 <th>Resultado</th>
                 <th>Detalhes</th>
@@ -693,7 +691,6 @@
               <td class="mono">${escapeHtml(String(item.contaId ?? '-'))}</td>
               <td class="mono muted">${escapeHtml(contaStatus)}</td>
               <td class="mono">${escapeHtml(String(item.numeroPedido ?? '-'))}</td>
-              <td class="mono muted">${escapeHtml(String(item.pedidoId ?? '-'))}</td>
               <td class="mono muted">${escapeHtml(pedidoStatus)}</td>
               <td>
                 <span class="status-pill ${statusClass}">
