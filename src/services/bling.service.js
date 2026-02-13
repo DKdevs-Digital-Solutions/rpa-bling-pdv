@@ -138,23 +138,29 @@ async function listContasReceberAbertasERecebidas(accountId = "default") {
 
   const filterField = (cfg.date_filter_field || "emissao").toLowerCase(); // emissao | vencimento | alteracao
 
+  // Params alinhados com o comportamento comprovado via curl:
+  // /contas/receber?situacoes[]=1&situacoes[]=2&idFormaPagamento=...&dataInicial=YYYY-MM-DD
+  // Observação: nesta rota, "dataInicial/dataFinal" funcionam de forma confiável para trazer títulos
+  // incluindo os emitidos no dia (evita divergência/ignorar params como dataEmissaoInicial).
   const params = {
-    "situacoes[]": [1, 2],               // 1 = em aberto, 2 = recebida (paga)
+    "situacoes[]": [1, 2],                    // 1 = em aberto, 2 = recebida (paga)
     idFormaPagamento: cfg.forma_pagamento_id, // PIX
   };
 
-  if (filterField === "vencimento") {
-    // Alguns ambientes usam dataInicial/dataFinal como vencimento.
-    params.dataInicial = baseInicial;
-    params.dataFinal = baseFinal;
-  } else if (filterField === "alteracao") {
-    // Para casos onde o período deve considerar alterações
+  if (filterField === "alteracao") {
+    // Alguns ambientes aceitam filtros específicos por alteração (mantemos compatibilidade)
     params.dataAlteracaoInicial = isoStartOfDay(baseInicial);
     params.dataAlteracaoFinal = isoEndOfDay(baseFinal);
+  } else if (filterField === "vencimento") {
+    // Em alguns cenários, o Bling interpreta dataInicial/dataFinal como vencimento.
+    params.dataInicial = baseInicial;
+    params.dataFinal = baseFinal;
   } else {
-    // Padrão do projeto: filtrar por EMISSÃO (para pegar o que foi gerado hoje).
-    params.dataEmissaoInicial = isoStartOfDay(baseInicial);
-    params.dataEmissaoFinal = isoEndOfDay(baseFinal);
+    // Padrão do projeto: usar dataInicial/dataFinal (data) para garantir que o "hoje" apareça,
+    // conforme comportamento validado via curl.
+    params.dataInicial = baseInicial;
+    // dataFinal é opcional; manter ajuda a limitar, mas pode ser removido se precisar.
+    params.dataFinal = baseFinal;
   }
 
   console.log(
