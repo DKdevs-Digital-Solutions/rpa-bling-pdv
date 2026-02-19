@@ -122,7 +122,7 @@ async function blingPatch(path, body, accountId) {
   );
 }
 
-async function listContasReceberAbertasERecebidas(accountId = "default") {
+async function listContasReceberAbertasERecebidas(accountId = "default", situacoesOverride = null) {
   const cfg = getAccountConfig(accountId);
 
   // Requisito do projeto: últimos 7 dias contando com hoje (janela móvel).
@@ -143,7 +143,9 @@ async function listContasReceberAbertasERecebidas(accountId = "default") {
   // Observação: nesta rota, "dataInicial/dataFinal" funcionam de forma confiável para trazer títulos
   // incluindo os emitidos no dia (evita divergência/ignorar params como dataEmissaoInicial).
   const params = {
-    "situacoes[]": [1, 2],                    // 1 = em aberto, 2 = recebida (paga)
+    "situacoes[]": (Array.isArray(situacoesOverride) && situacoesOverride.length
+      ? situacoesOverride
+      : [1, 2]),                    // 1 = em aberto, 2 = recebida (paga)
     idFormaPagamento: cfg.forma_pagamento_id, // PIX
   };
 
@@ -165,7 +167,7 @@ async function listContasReceberAbertasERecebidas(accountId = "default") {
 
   console.log(
     `[BLING] Buscando contas receber: conta=${accountId} forma=${cfg.forma_pagamento_id} ` +
-    `periodo=${baseInicial}..${baseFinal} campo=${filterField} situacoes=1,2`
+    `periodo=${baseInicial}..${baseFinal} campo=${filterField} situacoes=${(params["situacoes[]"] || []).join(',')}`
   );
 
   const resp = await blingGet("/contas/receber", params, accountId);

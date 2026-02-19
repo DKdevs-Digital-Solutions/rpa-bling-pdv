@@ -190,9 +190,54 @@ async function syncOnce(accountId = "default") {
     state.processedContaIds = pruneProcessed(state.processedContaIds || {});
     state.pendingPedidos = pruneByTtl(state.pendingPedidos || {}, STATE_TTL_HOURS);
 
+    // ====== LIMPEZA: CONTAS CANCELADAS QUE ESTAVAM PENDENTES ======
+    // Problema observado: uma conta a receber pode ter sido considerada no passado
+    // (ex.: ficou "pendente" para o cliente), mas foi cancelada depois.
+    // Como o nosso estado mantém pendências por pedido (pendingPedidos),
+    // removemos qualquer pendência cujo contaId tenha sido cancelado.
+    try {
+      const cancelSituacoes = Array.isArray(cfg.contas_receber_canceladas_situacoes)
+        ? cfg.contas_receber_canceladas_situacoes
+        : [3];
+
+      if (cancelSituacoes.length) {
+        logProgress(`Verificando contas a receber CANCELADAS (situações ${cancelSituacoes.join(',')}) para limpeza de pendências...`);
+        const contasCanceladas = await listContasReceberAbertasERecebidas(key, cancelSituacoes);
+        const cancelSet = new Set((contasCanceladas || []).map((c) => String(c.id)));
+
+        if (cancelSet.size) {
+          let removed = 0;
+          for (const [pedidoId, pend] of Object.entries(state.pendingPedidos || {})) {
+            const pendContaId = String(pend?.contaId || '');
+            if (pendContaId && cancelSet.has(pendContaId)) {
+              removed++;
+              delete state.pendingPedidos[pedidoId];
+              // também removemos do cache de processados caso tenha sido marcado no passado
+              delete state.processedContaIds[pendContaId];
+              auditEvent('warn', 'Pendência removida por conta cancelada', {
+                type: 'CANCELLED_PAYABLE_CLEANUP',
+                accountId: key,
+                pedidoId,
+                contaId: pendContaId,
+                numeroPedido: pend?.numeroPedido || null,
+                cancelSituacoes,
+              }, 'cleanup');
+            }
+          }
+          if (removed > 0) {
+            logWarning(`🧹 Removidas ${removed} pendências ligadas a contas canceladas.`);
+            saveState(key, state);
+          }
+        }
+      }
+    } catch (e) {
+      // limpeza não pode derrubar o sync
+      logWarning(`Falha ao verificar/limpar contas canceladas: ${e.message}`);
+    }
+
     // ====== BUSCAR CONTAS A RECEBER ======
     logProgress("Buscando contas a receber (situações 1 e 2)...");
-    const contas = await listContasReceberAbertasERecebidas(key);
+    const contas = await listContasReceberAbertasERecebidas(key, [1, 2]);
     logInfo(`📋 Total de contas encontradas: ${contas.length}`);
     auditEvent('info', 'Contas a receber obtidas', { type: 'PAYABLES_FETCHED', total: contas.length }, 'fetch_payables');
 
