@@ -45,6 +45,15 @@ function normalizeAccountConfig(a) {
     // opcional: data inicial por conta
     data_inicial: (a.data_inicial ?? a.dataInicial ?? a.DATA_INICIAL ?? cfg.data_inicial ?? cfg.dataInicial ?? cfg.DATA_INICIAL),
     lookback_days: toNumberOrUndefined(a.lookback_days ?? a.lookbackDays ?? a.LOOKBACK_DAYS ?? cfg.lookback_days ?? cfg.lookbackDays ?? cfg.LOOKBACK_DAYS),
+
+    // (Opcional) Situações de contas a receber que representam "cancelada".
+    // Usado para limpar pendências quando um título foi cancelado depois.
+    contas_receber_canceladas_situacoes:
+      Array.isArray(a.contas_receber_canceladas_situacoes ?? a.contasReceberCanceladasSituacoes ?? a.CONTAS_RECEBER_CANCELADAS_SITUACOES ?? cfg.contas_receber_canceladas_situacoes ?? cfg.contasReceberCanceladasSituacoes ?? cfg.CONTAS_RECEBER_CANCELADAS_SITUACOES)
+        ? (a.contas_receber_canceladas_situacoes ?? a.contasReceberCanceladasSituacoes ?? a.CONTAS_RECEBER_CANCELADAS_SITUACOES ?? cfg.contas_receber_canceladas_situacoes ?? cfg.contasReceberCanceladasSituacoes ?? cfg.CONTAS_RECEBER_CANCELADAS_SITUACOES)
+            .map((x) => Number(x))
+            .filter((x) => Number.isFinite(x))
+        : undefined,
   };
 }
 
@@ -120,6 +129,11 @@ function getAccountConfig(accountId = "default") {
   const globalDataInicial = process.env.DATA_INICIAL;
   const globalLookback = toNumberOrUndefined(process.env.LOOKBACK_DAYS);
 
+  const globalCancelSituacoes = parseJsonEnv("CONTAS_RECEBER_CANCELADAS_SITUACOES", null);
+  const normalizedGlobalCancel = Array.isArray(globalCancelSituacoes)
+    ? globalCancelSituacoes.map((x) => Number(x)).filter((x) => Number.isFinite(x))
+    : undefined;
+
   const globalStart = toNumberOrUndefined(process.env.START_SITUACAO);
   const globalFlowRaw = parseJsonEnv("FLOW", null);
   const globalFlow = Array.isArray(globalFlowRaw)
@@ -139,6 +153,9 @@ function getAccountConfig(accountId = "default") {
     start_situacao: per.start_situacao ?? globalStart ?? 6,
     flow,
     final_situacao_id,
+
+    contas_receber_canceladas_situacoes:
+      per.contas_receber_canceladas_situacoes ?? normalizedGlobalCancel ?? [3],
   };
 }
 
