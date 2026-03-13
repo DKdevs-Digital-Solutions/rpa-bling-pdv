@@ -4,6 +4,7 @@ const syncRoutes = require("./routes/sync.routes");
 const logsRoutes = require("./routes/logs.routes");
 const accountsRoutes = require("./routes/accounts.routes");
 const { requestLoggerMiddleware } = require("./utils/logger");
+const tokenRoutes = require("./routes/token.routes");
 const path = require("path");
 
 const app = express();
@@ -24,5 +25,6 @@ app.use("/auth", authRoutes);
 app.use("/sync", syncRoutes);
 app.use("/api/accounts", accountsRoutes);
 app.use("/", logsRoutes);
+app.use("/auth/token", tokenRoutes);
 
 module.exports = app;
