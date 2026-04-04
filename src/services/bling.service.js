@@ -64,6 +64,7 @@ async function blingRequest(config, { maxRetries = 3, accountId = "default" } = 
         headers: {
           Accept: "application/json",
           Authorization: `Bearer ${token}`,
+          enable-jwt: "1",
           ...(config.method && config.method.toLowerCase() !== "get"
             ? { "Content-Type": "application/json" }
             : {}),
