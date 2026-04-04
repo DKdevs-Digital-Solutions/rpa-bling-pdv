@@ -77,7 +77,7 @@ async function refreshAccessToken(accountId, refreshToken) {
   const resp = await axios.post(BLING_TOKEN_URL, data.toString(), {
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
-      "enable-jwt":1,
+      "enable-jwt": "1",
       "Authorization": `Basic ${basic}`,
     },
   });
